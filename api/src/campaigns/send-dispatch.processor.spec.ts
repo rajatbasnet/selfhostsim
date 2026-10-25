@@ -81,7 +81,11 @@ describe('SendDispatchProcessor', () => {
     data: { sendId: send._id.toString(), campaignId: campaign._id.toString() },
   })
 
-  const given = (send: any, campaign: any, contact: any = { smsConsent: true, emailConsent: true }) => {
+  const given = (
+    send: any,
+    campaign: any,
+    contact: any = { smsConsent: true, emailConsent: true },
+  ) => {
     mockSendModel.findById.mockReturnValue(chain(send))
     mockCampaignModel.findById.mockReturnValue(chain(campaign))
     mockContactModel.findById.mockReturnValue(chain(contact))
@@ -119,7 +123,9 @@ describe('SendDispatchProcessor', () => {
   })
 
   const sendUpdate = () =>
-    mockSendModel.updateOne.mock.calls.map((c) => c[1]).find((u) => u.$set?.status)
+    mockSendModel.updateOne.mock.calls
+      .map((c) => c[1])
+      .find((u) => u.$set?.status)
 
   it('ignores a job whose send is no longer QUEUED', async () => {
     const campaign = makeCampaign()
@@ -153,11 +159,16 @@ describe('SendDispatchProcessor', () => {
       Channel.SMS,
       { _id: userId },
     )
-    expect(result).toEqual({ outcome: 'skipped', reason: SkipReason.SUPPRESSED })
+    expect(result).toEqual({
+      outcome: 'skipped',
+      reason: SkipReason.SUPPRESSED,
+    })
     expect(mockGatewayService.sendSMS).not.toHaveBeenCalled()
     expect(mockSendModel.updateOne).toHaveBeenCalledWith(
       { _id: send._id },
-      { $set: { status: SendStatus.SKIPPED, skipReason: SkipReason.SUPPRESSED } },
+      {
+        $set: { status: SendStatus.SKIPPED, skipReason: SkipReason.SUPPRESSED },
+      },
     )
     expect(mockCampaignModel.updateOne).toHaveBeenCalledWith(
       { _id: campaign._id },
@@ -176,7 +187,10 @@ describe('SendDispatchProcessor', () => {
     const send = makeSend(campaign)
     given(send, campaign, { smsConsent: true, optedOutAt: new Date() })
     const result = await processor.handleSend(job(send, campaign))
-    expect(result).toEqual({ outcome: 'skipped', reason: SkipReason.NO_CONSENT })
+    expect(result).toEqual({
+      outcome: 'skipped',
+      reason: SkipReason.NO_CONSENT,
+    })
     expect(mockGatewayService.sendSMS).not.toHaveBeenCalled()
   })
 
@@ -194,9 +208,16 @@ describe('SendDispatchProcessor', () => {
     expect(mockGatewayService.sendSMS).not.toHaveBeenCalled()
     expect(mockQueue.add).toHaveBeenCalledTimes(1)
     const [data, opts] = mockQueue.add.mock.calls[0]
-    expect(data).toEqual({ sendId: send._id.toString(), campaignId: campaign._id.toString() })
-    expect(opts.delay).toBeGreaterThanOrEqual(4 * 3600_000 - DEFAULT_PACING.jitterMs)
-    expect(opts.delay).toBeLessThanOrEqual(4 * 3600_000 + DEFAULT_PACING.jitterMs)
+    expect(data).toEqual({
+      sendId: send._id.toString(),
+      campaignId: campaign._id.toString(),
+    })
+    expect(opts.delay).toBeGreaterThanOrEqual(
+      4 * 3600_000 - DEFAULT_PACING.jitterMs,
+    )
+    expect(opts.delay).toBeLessThanOrEqual(
+      4 * 3600_000 + DEFAULT_PACING.jitterMs,
+    )
     expect(opts.jobId).not.toBe(send._id.toString())
     // The send row stays QUEUED.
     expect(sendUpdate()).toBeUndefined()
@@ -204,11 +225,15 @@ describe('SendDispatchProcessor', () => {
 
   it('defers to tomorrow when the daily cap is exhausted', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-10T12:00:00Z'))
-    const campaign = makeCampaign({ pacing: { ...DEFAULT_PACING, dailyCap: 500 } })
+    const campaign = makeCampaign({
+      pacing: { ...DEFAULT_PACING, dailyCap: 500 },
+    })
     const send = makeSend(campaign)
     given(send, campaign)
     // First count: sent today (cap hit). Second: queue position for spreading.
-    mockSendModel.countDocuments.mockResolvedValueOnce(500).mockResolvedValueOnce(0)
+    mockSendModel.countDocuments
+      .mockResolvedValueOnce(500)
+      .mockResolvedValueOnce(0)
 
     const result = await processor.handleSend(job(send, campaign))
 
@@ -228,16 +253,23 @@ describe('SendDispatchProcessor', () => {
   })
 
   it('counts the day in the campaign timezone', async () => {
-    // 01:00Z on the 11th is still the 10th in New York (-5): day start is 05:00Z on the 10th.
+    // 01:00Z on the 11th is still the 10th in New York (EDT, -4): local midnight was 04:00Z on the 10th.
     jest.useFakeTimers().setSystemTime(new Date('2026-03-11T01:00:00Z'))
     const campaign = makeCampaign({
-      pacing: { ...DEFAULT_PACING, windowStartHour: 0, windowEndHour: 0, timezone: 'America/New_York' },
+      pacing: {
+        ...DEFAULT_PACING,
+        windowStartHour: 0,
+        windowEndHour: 0,
+        timezone: 'America/New_York',
+      },
     })
     const send = makeSend(campaign)
     given(send, campaign)
     await processor.handleSend(job(send, campaign))
     expect(mockSendModel.countDocuments).toHaveBeenCalledWith(
-      expect.objectContaining({ sentAt: { $gte: new Date('2026-03-10T05:00:00Z') } }),
+      expect.objectContaining({
+        sentAt: { $gte: new Date('2026-03-10T04:00:00Z') },
+      }),
     )
   })
 
@@ -255,7 +287,10 @@ describe('SendDispatchProcessor', () => {
         recipients: ['+9779800000001'],
       }),
     )
-    expect(result).toEqual({ outcome: 'sent', providerId: '65f000000000000000000001' })
+    expect(result).toEqual({
+      outcome: 'sent',
+      providerId: '65f000000000000000000001',
+    })
     expect(mockSendModel.updateOne).toHaveBeenCalledWith(
       { _id: send._id },
       {
@@ -288,7 +323,10 @@ describe('SendDispatchProcessor', () => {
       responses: [{ success: true, messageId: 'projects/x/messages/1' }],
     })
     const result = await processor.handleSend(job(send, campaign))
-    expect(result).toEqual({ outcome: 'sent', providerId: 'projects/x/messages/1' })
+    expect(result).toEqual({
+      outcome: 'sent',
+      providerId: 'projects/x/messages/1',
+    })
   })
 
   it('dispatches email through EmailService and stores the SMTP message id', async () => {
@@ -315,7 +353,12 @@ describe('SendDispatchProcessor', () => {
     await processor.handleSend(job(send, campaign))
     expect(mockCampaignModel.updateOne).toHaveBeenCalledWith(
       { _id: campaign._id, status: CampaignStatus.SENDING },
-      { $set: { status: CampaignStatus.COMPLETED, completedAt: expect.any(Date) } },
+      {
+        $set: {
+          status: CampaignStatus.COMPLETED,
+          completedAt: expect.any(Date),
+        },
+      },
     )
   })
 
@@ -324,7 +367,9 @@ describe('SendDispatchProcessor', () => {
     const send = makeSend(campaign)
     given(send, campaign)
     // daily-cap count, then remaining-queued count
-    mockSendModel.countDocuments.mockResolvedValueOnce(3).mockResolvedValueOnce(2)
+    mockSendModel.countDocuments
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce(2)
     await processor.handleSend(job(send, campaign))
     const completion = mockCampaignModel.updateOne.mock.calls.find(
       (c) => c[1].$set?.status === CampaignStatus.COMPLETED,
@@ -426,7 +471,13 @@ describe('SendDispatchProcessor', () => {
       successCount: 0,
       failureCount: 1,
       responses: [
-        { success: false, error: { code: 'messaging/invalid-registration-token', message: 'bad token' } },
+        {
+          success: false,
+          error: {
+            code: 'messaging/invalid-registration-token',
+            message: 'bad token',
+          },
+        },
       ],
     })
     const result = await processor.handleSend(job(send, campaign))
