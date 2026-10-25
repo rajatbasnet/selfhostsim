@@ -11,7 +11,7 @@ import { Button, Field, InlineError, Input, Modal, Select, Textarea } from '@/co
 
 const SAMPLE = { name: 'Asha Thapa', tags: ['regular'], phone: '+9779812344412', email: 'asha@example.com' }
 
-export function TemplateEditor({ open, template, onClose, onDone, initialBody, initialChannel }: { open: boolean; template: Template | null; onClose: () => void; onDone: (t?: Template) => void; initialBody?: string; initialChannel?: Channel }) {
+export function TemplateEditor({ open, template, onClose, onDone, initialBody, initialChannel, initialSubject }: { open: boolean; template: Template | null; onClose: () => void; onDone: (t?: Template) => void; initialBody?: string; initialChannel?: Channel; initialSubject?: string }) {
   const [name, setName] = useState('')
   const [channel, setChannel] = useState<Channel>('sms')
   const [subject, setSubject] = useState('')
@@ -23,10 +23,10 @@ export function TemplateEditor({ open, template, onClose, onDone, initialBody, i
     if (!open) return
     setName(template?.name ?? '')
     setChannel(template?.channel ?? initialChannel ?? 'sms')
-    setSubject(template?.subject ?? '')
+    setSubject(template?.subject ?? initialSubject ?? '')
     setBody(template?.body ?? initialBody ?? '')
     clearError()
-  }, [open, template, initialBody, initialChannel, clearError])
+  }, [open, template, initialBody, initialChannel, initialSubject, clearError])
 
   const insert = (tag: string) => {
     const el = bodyRef.current
@@ -45,12 +45,13 @@ export function TemplateEditor({ open, template, onClose, onDone, initialBody, i
     })
   }
 
-  const isSms = channel === 'sms' || channel === 'both'
+  const isSms = channel === 'sms'
   const finalSms = useMemo(() => (isSms ? withStopLine(body) : body), [body, isSms])
   const rendered = useMemo(() => renderMerge(finalSms, mergeVars(SAMPLE, { shop_name: 'Your Shop' })), [finalSms])
 
   const save = async () => {
-    const payload = { name: name.trim(), channel, subject: channel === 'sms' ? undefined : subject.trim() || undefined, body }
+    // CreateTemplateDTO: subject is required for email templates and ignored for SMS.
+    const payload = { name: name.trim(), channel, subject: channel === 'email' ? subject.trim() : undefined, body }
     const r = await run(() => (template ? api.patch<Template>(`/templates/${template._id}`, payload) : api.post<Template>('/templates', payload)))
     if (r !== undefined) {
       onDone(r)
@@ -69,7 +70,7 @@ export function TemplateEditor({ open, template, onClose, onDone, initialBody, i
           <Button onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={save} disabled={busy || !name.trim() || !body.trim()}>
+          <Button variant="primary" onClick={save} disabled={busy || !name.trim() || !body.trim() || (channel === 'email' && !subject.trim())}>
             {busy ? 'Saving…' : 'Save template'}
           </Button>
         </>
@@ -85,7 +86,6 @@ export function TemplateEditor({ open, template, onClose, onDone, initialBody, i
               <Select value={channel} onChange={(e) => setChannel(e.target.value as Channel)}>
                 <option value="sms">SMS</option>
                 <option value="email">Email</option>
-                <option value="both">Both</option>
               </Select>
             </Field>
           </div>

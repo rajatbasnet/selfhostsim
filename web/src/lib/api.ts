@@ -129,8 +129,9 @@ export const api = {
     const r = await request<T>('PUT', path, body)
     return r.data as T
   },
-  async del<T = unknown>(path: string): Promise<T> {
-    const r = await request<T>('DELETE', path)
+  /** `body` is for the few routes that take one, e.g. DELETE /lists/:id/members { contactIds }. */
+  async del<T = unknown>(path: string, body?: unknown): Promise<T> {
+    const r = await request<T>('DELETE', path, body)
     return r.data as T
   },
 }

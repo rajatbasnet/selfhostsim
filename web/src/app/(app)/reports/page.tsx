@@ -9,16 +9,18 @@ import type { Campaign } from '@/lib/types'
 import { EmptyState, ErrorState, LinkButton, Loading, PageHeader, StatTile, StatusBadge, Table, Td, Th } from '@/components/ui'
 
 export default function ReportsPage() {
-  const list = useLoad(() => api.list<Campaign>('/campaigns?limit=100&sort=-createdAt'), [])
-  const finished = useMemo(() => (list.data?.data ?? []).filter((c) => isFinished(c.status) || c.status === 'failed' || (c.stats?.sent ?? 0) > 0), [list.data])
+  const list = useLoad(() => api.list<Campaign>('/campaigns'), [])
+  // Send rows move queued → sent → delivered, so "sent" is both of those.
+  const sentOf = (c: Campaign) => (c.stats?.sent ?? 0) + (c.stats?.delivered ?? 0)
+  const finished = useMemo(() => (list.data?.data ?? []).filter((c) => isFinished(c.status) || c.status === 'failed' || sentOf(c) > 0), [list.data])
 
   const totals = useMemo(() => {
-    const t = { sent: 0, delivered: 0, failed: 0, optedOut: 0 }
+    const t = { sent: 0, delivered: 0, failed: 0, skipped: 0 }
     for (const c of finished) {
-      t.sent += c.stats?.sent ?? 0
+      t.sent += sentOf(c)
       t.delivered += c.stats?.delivered ?? 0
       t.failed += c.stats?.failed ?? 0
-      t.optedOut += c.stats?.optedOut ?? 0
+      t.skipped += c.stats?.skipped ?? 0
     }
     return t
   }, [finished])
@@ -32,7 +34,7 @@ export default function ReportsPage() {
         <StatTile value={fmtNum(totals.sent)} label="messages sent, all campaigns" />
         <StatTile value={rate === null ? '—' : `${rate}%`} label="delivered" tone="ok" hint={rate === null ? 'nothing sent yet' : `${fmtNum(totals.delivered)} confirmed by the phone`} />
         <StatTile value={fmtNum(totals.failed)} label="failed" tone={totals.failed ? 'bad' : 'grey'} />
-        <StatTile value={fmtNum(totals.optedOut)} label="replied STOP" tone={totals.optedOut ? 'warn' : 'grey'} />
+        <StatTile value={fmtNum(totals.skipped)} label="held back" tone={totals.skipped ? 'warn' : 'grey'} hint="opted out, no consent, duplicates" />
       </div>
       <div className="mt-4 rounded-card border border-line bg-card">
         {list.loading && !list.data ? (
@@ -51,8 +53,7 @@ export default function ReportsPage() {
                 <Th right>Sent</Th>
                 <Th right>Delivered</Th>
                 <Th right>Failed</Th>
-                <Th right>Opted out</Th>
-                <Th right>Replied</Th>
+                <Th right>Held back</Th>
                 <Th>Finished</Th>
               </tr>
             </thead>
@@ -66,14 +67,13 @@ export default function ReportsPage() {
                   </Td>
                   <Td>{channelLabel(c.channel)}</Td>
                   <Td>
-                    <StatusBadge status={c.status} />
+                    <StatusBadge status={c.status} error={c.error} />
                   </Td>
-                  <Td right>{fmtNum(c.stats?.sent)}</Td>
+                  <Td right>{fmtNum(c.stats ? sentOf(c) : undefined)}</Td>
                   <Td right className="text-ok">{fmtNum(c.stats?.delivered)}</Td>
                   <Td right className={c.stats?.failed ? 'text-bad' : ''}>{fmtNum(c.stats?.failed)}</Td>
-                  <Td right>{fmtNum(c.stats?.optedOut)}</Td>
-                  <Td right>{fmtNum(c.stats?.replied)}</Td>
-                  <Td className="whitespace-nowrap text-mut">{fmtDateTime(c.finishedAt ?? c.startedAt)}</Td>
+                  <Td right>{fmtNum(c.stats?.skipped)}</Td>
+                  <Td className="whitespace-nowrap text-mut">{fmtDateTime(c.completedAt ?? c.startedAt)}</Td>
                 </tr>
               ))}
             </tbody>

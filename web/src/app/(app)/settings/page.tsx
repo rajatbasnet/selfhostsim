@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { api } from '@/lib/api'
-import { fmtNum, timeAgo, titleCase } from '@/lib/format'
+import { fmtNum, hourLabel, timeAgo, titleCase } from '@/lib/format'
 import { useAction, useLoad } from '@/lib/hooks'
 import { deviceState } from '@/lib/status'
-import type { ApiKey, Device, PacingSettings, Settings, SmtpSettings, SuppressionEntry } from '@/lib/types'
-import { Badge, Button, Card, Checkbox, Confirm, EmptyState, ErrorState, Field, InlineError, Input, Loading, Modal, Notice, Table, Td, Th } from '@/components/ui'
+import type { ApiKey, Device, PacingSettings, Settings, SuppressionEntry } from '@/lib/types'
+import { Badge, Button, Card, Confirm, EmptyState, ErrorState, Field, InlineError, Input, Loading, Modal, Notice, Table, Td, Th } from '@/components/ui'
 
 export default function SettingsPage() {
   return (
@@ -85,144 +85,80 @@ function PhoneSection() {
 
 /* ------------------------------------------------------------------ */
 
-const DEFAULT_PACING: Required<PacingSettings> = { ratePerMin: 10, dailyCap: 500, windowStart: '09:00', windowEnd: '20:00', jitterSeconds: 2, timezone: 'UTC' }
+/** DEFAULT_PACING in api/src/sendline/sendline.enums.ts: what every new campaign starts from. */
+const DEFAULT_PACING: Required<PacingSettings> = { ratePerMinute: 10, dailyCap: 500, windowStartHour: 9, windowEndHour: 20, jitterMs: 2000, timezone: 'UTC' }
 
 function PacingSection() {
-  const settings = useLoad(() => api.get<Settings>('/settings'), [])
-  const [p, setP] = useState<Required<PacingSettings>>(DEFAULT_PACING)
-  const [saved, setSaved] = useState(false)
-  const { busy, error, run } = useAction()
-
-  useEffect(() => {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-    setP({ ...DEFAULT_PACING, timezone: tz, ...(settings.data?.pacing ?? {}) } as Required<PacingSettings>)
-  }, [settings.data])
-
-  const save = async () => {
-    setSaved(false)
-    const r = await run(() => api.patch('/settings', { pacing: p }))
-    if (r !== undefined) setSaved(true)
-  }
-
-  const perDayMinutes = p.dailyCap / Math.max(1, p.ratePerMin)
+  // There is no GET /settings on the server. The call is kept so the page picks it up the day it
+  // exists; until then it resolves to null and the defaults below are shown.
+  const settings = useLoad(() => api.get<Settings>('/settings').catch(() => null as Settings | null), [])
+  const p: Required<PacingSettings> = { ...DEFAULT_PACING, ...(settings.data?.pacing ?? {}) }
+  const perDayMinutes = p.dailyCap / Math.max(1, p.ratePerMinute)
 
   return (
     <Card title="Pacing — the four knobs">
+      <div className="px-4 pt-3">
+        <Notice tone="info">
+          These are the defaults every new campaign starts from. Pacing is set per campaign, in the composer&apos;s “When it goes” step, and can be changed on a paused campaign. There is no server-wide setting to save here.
+        </Notice>
+      </div>
       <div className="grid gap-4 p-4 sm:grid-cols-2">
         <Field label="Messages per minute" hint="10 is about as fast as a person could type. A phone that sends 500 texts in four minutes looks like a spam bot to the carrier, and the punishment is your SIM.">
-          <Input type="number" min={1} max={60} value={p.ratePerMin} onChange={(e) => setP({ ...p, ratePerMin: Math.max(1, Number(e.target.value) || 1) })} />
+          <div className="text-lg font-semibold tabular-nums">{fmtNum(p.ratePerMinute)}</div>
         </Field>
         <Field label="Daily cap" hint="A hard stop. Carrier spam thresholds live here. Lower it before you raise it; add a second phone before going above a few hundred.">
-          <Input type="number" min={1} value={p.dailyCap} onChange={(e) => setP({ ...p, dailyCap: Math.max(1, Number(e.target.value) || 1) })} />
+          <div className="text-lg font-semibold tabular-nums">{fmtNum(p.dailyCap)}</div>
         </Field>
-        <Field label="Sending hours" hint="Nothing goes out outside this window. Transactional messages from your other apps still go instantly.">
-          <div className="flex items-center gap-2">
-            <Input type="time" value={p.windowStart} onChange={(e) => setP({ ...p, windowStart: e.target.value })} />
-            <span className="text-mut">to</span>
-            <Input type="time" value={p.windowEnd} onChange={(e) => setP({ ...p, windowEnd: e.target.value })} />
+        <Field label="Sending hours" hint="Nothing goes out outside this window, in the campaign's time zone. Transactional messages from your other apps still go instantly.">
+          <div className="text-lg font-semibold tabular-nums">
+            {hourLabel(p.windowStartHour)} <span className="text-sm font-normal text-mut">to</span> {hourLabel(p.windowEndHour)}
           </div>
         </Field>
-        <Field label="Spacing wobble (seconds)" hint="Each message goes out a random few seconds early or late, so the phone is never a perfect metronome.">
-          <Input type="number" min={0} max={30} value={p.jitterSeconds} onChange={(e) => setP({ ...p, jitterSeconds: Math.max(0, Number(e.target.value) || 0) })} />
+        <Field label="Spacing wobble" hint="Each message goes out a random couple of seconds early or late, so the phone is never a perfect metronome.">
+          <div className="text-lg font-semibold tabular-nums">
+            ±{Math.round(p.jitterMs / 1000)} <span className="text-sm font-normal text-mut">seconds</span>
+          </div>
         </Field>
-        <Field label="Time zone" hint="Sending hours are read in this zone.">
-          <Input value={p.timezone} onChange={(e) => setP({ ...p, timezone: e.target.value })} />
+        <Field label="Time zone" hint="The composer uses this device's time zone for each new campaign; the server default is shown here.">
+          <div className="text-lg font-semibold">{p.timezone}</div>
         </Field>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3">
-        <div className="text-xs text-mut">
-          {fmtNum(p.dailyCap)} messages at {p.ratePerMin} a minute is about {Math.round(perDayMinutes)} minutes of sending a day. Changes apply to the next message, no restart needed.
-        </div>
-        <div className="flex items-center gap-2">
-          {saved && <span className="text-xs text-ok">Saved</span>}
-          <Button variant="primary" onClick={save} disabled={busy}>
-            {busy ? 'Saving…' : 'Save pacing'}
-          </Button>
-        </div>
+      <div className="border-t border-line px-4 py-3 text-xs text-mut">
+        {fmtNum(p.dailyCap)} messages at {p.ratePerMinute} a minute is about {Math.round(perDayMinutes)} minutes of sending a day.
       </div>
-      {(error || settings.error) && (
-        <div className="px-4 pb-3">
-          <InlineError message={error ?? `Could not load the saved pacing: ${settings.error}. The values shown are defaults.`} />
-        </div>
-      )}
     </Card>
   )
 }
 
 /* ------------------------------------------------------------------ */
 
+/** The variables api/.env reads for the email relay. */
+const SMTP_VARS: { name: string; what: string }[] = [
+  { name: 'SMTP_HOST', what: 'the server, e.g. smtp.gmail.com, smtp.mailgun.org, or your own' },
+  { name: 'SMTP_PORT', what: '587, or 465 with TLS' },
+  { name: 'SMTP_SECURE', what: 'true for TLS on port 465' },
+  { name: 'SMTP_USER', what: 'the username' },
+  { name: 'SMTP_PASS', what: 'the password' },
+  { name: 'SMTP_FROM', what: 'what people see as the sender, e.g. "Your Shop <hello@yourshop.com>"' },
+]
+
 function SmtpSection() {
-  const settings = useLoad(() => api.get<Settings>('/settings'), [])
-  const [s, setS] = useState<SmtpSettings>({ host: '', port: 587, secure: false, user: '', password: '', fromName: '', fromEmail: '' })
-  const [testTo, setTestTo] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [testResult, setTestResult] = useState<string | null>(null)
-  const { busy, error, run } = useAction()
-
-  useEffect(() => {
-    if (settings.data?.smtp) setS((prev) => ({ ...prev, ...settings.data?.smtp, password: '' }))
-  }, [settings.data])
-
-  const save = async () => {
-    setSaved(false)
-    const body: SmtpSettings = { ...s }
-    if (!body.password) delete body.password // keep the stored one
-    const r = await run(() => api.patch('/settings', { smtp: body }))
-    if (r !== undefined) setSaved(true)
-  }
-  const test = async () => {
-    setTestResult(null)
-    const r = await run(() => api.post<{ ok?: boolean; message?: string }>('/settings/smtp/test', { to: testTo }))
-    if (r !== undefined) setTestResult(r?.message ?? `Test email sent to ${testTo}. Check the inbox (and spam).`)
-  }
-
   return (
     <Card title="Email relay (SMTP)">
-      <div className="grid gap-4 p-4 sm:grid-cols-2">
-        <Field label="Server" hint="e.g. smtp.gmail.com, smtp.mailgun.org, or your own.">
-          <Input value={s.host ?? ''} onChange={(e) => setS({ ...s, host: e.target.value })} placeholder="smtp.example.com" />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Port">
-            <Input type="number" value={s.port ?? 587} onChange={(e) => setS({ ...s, port: Number(e.target.value) || 587 })} />
-          </Field>
-          <div className="pt-7">
-            <Checkbox label="Use TLS (port 465)" checked={Boolean(s.secure)} onChange={(e) => setS({ ...s, secure: e.target.checked })} />
-          </div>
-        </div>
-        <Field label="Username">
-          <Input value={s.user ?? ''} onChange={(e) => setS({ ...s, user: e.target.value })} autoComplete="off" />
-        </Field>
-        <Field label="Password" hint={settings.data?.smtp?.host ? 'Leave blank to keep the saved one.' : undefined}>
-          <Input type="password" value={s.password ?? ''} onChange={(e) => setS({ ...s, password: e.target.value })} autoComplete="new-password" />
-        </Field>
-        <Field label="From name" hint="What people see as the sender.">
-          <Input value={s.fromName ?? ''} onChange={(e) => setS({ ...s, fromName: e.target.value })} placeholder="Your Shop" />
-        </Field>
-        <Field label="From email">
-          <Input type="email" value={s.fromEmail ?? ''} onChange={(e) => setS({ ...s, fromEmail: e.target.value })} placeholder="hello@yourshop.com" />
-        </Field>
+      <div className="space-y-3 p-4 text-sm">
+        <Notice tone="info">
+          The email relay is configured on the server, in <span className="font-mono">api/.env</span>, not from this page. Edit the file and restart the API; there is nothing to save here.
+        </Notice>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+          {SMTP_VARS.map((v) => (
+            <div key={v.name} className="contents">
+              <dt className="font-mono text-xs">{v.name}</dt>
+              <dd className="text-mut">{v.what}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="text-xs text-mut">To check it works, send yourself a one-person email campaign from the composer.</p>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Input type="email" placeholder="you@example.com" value={testTo} onChange={(e) => setTestTo(e.target.value)} className="w-56" aria-label="Send a test email to" />
-          <Button onClick={test} disabled={busy || !testTo}>
-            Send a test email
-          </Button>
-        </div>
-        <div className="flex items-center gap-2">
-          {saved && <span className="text-xs text-ok">Saved</span>}
-          <Button variant="primary" onClick={save} disabled={busy}>
-            {busy ? 'Saving…' : 'Save email settings'}
-          </Button>
-        </div>
-      </div>
-      {(testResult || error) && (
-        <div className="space-y-2 px-4 pb-3">
-          {testResult && <Notice tone="ok">{testResult}</Notice>}
-          <InlineError message={error} />
-        </div>
-      )}
     </Card>
   )
 }
@@ -237,10 +173,24 @@ function ApiKeysSection() {
   const { busy, error, run } = useAction()
 
   const create = async () => {
-    const r = await run(() => api.post<ApiKey | string>('/auth/api-keys', { name: newName.trim() || undefined }))
+    // POST /auth/api-keys takes no body and returns the full key once, as a string.
+    const r = await run(async () => {
+      const full = await api.post<string>('/auth/api-keys')
+      const wanted = newName.trim()
+      if (wanted && typeof full === 'string') {
+        // The list stores a masked prefix of each key; find the new one and name it.
+        try {
+          const all = await api.list<ApiKey>('/auth/api-keys')
+          const mine = all.data.find((k) => k.apiKey && full.startsWith(k.apiKey.replace(/\*+$/, '')))
+          if (mine) await api.patch(`/auth/api-keys/${mine._id}/rename`, { name: wanted })
+        } catch {
+          // The key exists either way; it just keeps the default name.
+        }
+      }
+      return full
+    })
     if (r !== undefined) {
-      const full = typeof r === 'string' ? r : r?.apiKey ?? null
-      setFresh(full)
+      setFresh(typeof r === 'string' ? r : null)
       setNewName('')
       keys.reload()
     }
@@ -326,7 +276,8 @@ function SuppressionSection() {
 
   const add = async () => {
     const v = value.trim()
-    const body = v.includes('@') ? { email: v.toLowerCase(), reason: 'manual' } : { phone: v, reason: 'manual' }
+    // CreateSuppressionDTO: { value, channel: 'sms' | 'email', reason }
+    const body = { value: v.includes('@') ? v.toLowerCase() : v, channel: v.includes('@') ? 'email' : 'sms', reason: 'manual' }
     const r = await run(() => api.post('/suppression', body))
     if (r !== undefined) {
       setValue('')
@@ -367,7 +318,7 @@ function SuppressionSection() {
           <tbody>
             {list.data.data.map((s) => (
               <tr key={s._id}>
-                <Td mono>{s.phone ?? s.email ?? '—'}</Td>
+                <Td mono>{s.value ?? '—'}</Td>
                 <Td>{reasonLabel(s.reason)}</Td>
                 <Td className="text-mut">{timeAgo(s.createdAt)}</Td>
                 <Td right>
@@ -391,7 +342,7 @@ function SuppressionSection() {
       <div className="px-4 pb-3">
         <InlineError message={error} />
       </div>
-      <Confirm open={Boolean(removing)} onClose={() => setRemoving(null)} onConfirm={remove} busy={busy} title="Allow messaging this person again?" confirmLabel="Yes, remove" body={<p>Only do this if {removing?.phone ?? removing?.email} asked you to. Entries added by a STOP reply cannot be removed here.</p>} />
+      <Confirm open={Boolean(removing)} onClose={() => setRemoving(null)} onConfirm={remove} busy={busy} title="Allow messaging this person again?" confirmLabel="Yes, remove" body={<p>Only do this if {removing?.value ?? 'this person'} asked you to. Entries added by a STOP reply cannot be removed here.</p>} />
     </Card>
   )
 }

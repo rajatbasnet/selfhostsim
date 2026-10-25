@@ -120,39 +120,59 @@ export function lastName(c: { name?: string; lastName?: string } | undefined | n
 export function channelLabel(ch: string | undefined): string {
   if (ch === 'sms') return 'SMS'
   if (ch === 'email') return 'Email'
-  if (ch === 'both') return 'SMS + Email'
   return ch ? titleCase(ch) : '—'
 }
 
-export function statusLabel(status: string | undefined): string {
+/** POST /campaigns/:id/cancel leaves status "failed" with this error. */
+export function isCancelled(c: { status?: string; error?: string | null } | null | undefined): boolean {
+  return c?.status === 'failed' && /cancel/i.test(c.error ?? '')
+}
+
+/** CampaignStatus is draft | scheduled | sending | paused | completed | failed. */
+export function statusLabel(status: string | undefined, error?: string | null): string {
   switch (status) {
     case 'draft':
       return 'Draft'
     case 'scheduled':
       return 'Scheduled'
     case 'sending':
-    case 'running':
       return 'Sending'
     case 'paused':
       return 'Paused'
-    case 'done':
     case 'completed':
-    case 'finished':
       return 'Done'
     case 'failed':
-      return 'Stopped with errors'
-    case 'cancelled':
-    case 'canceled':
-      return 'Cancelled'
+      return isCancelled({ status, error }) ? 'Cancelled' : 'Stopped with errors'
     default:
       return status ? titleCase(status) : 'Unknown'
   }
 }
 
 export function isFinished(status: string | undefined): boolean {
-  return status === 'done' || status === 'completed' || status === 'finished'
+  return status === 'completed'
 }
 
 export function isActive(status: string | undefined): boolean {
-  return status === 'sending' || status === 'running' || status === 'paused'
+  return status === 'sending' || status === 'paused'
+}
+
+/** The API's SkipReason values, in plain language. Shared by the composer and the report. */
+export const SKIP_REASONS: Record<string, { label: string; one: string; many: string; why: string }> = {
+  suppressed: { label: 'opted out', one: 'was suppressed', many: 'were suppressed', why: 'replied STOP at some point' },
+  no_consent: { label: 'no consent', one: 'had no consent', many: 'had no consent', why: 'imported without a source' },
+  duplicate: { label: 'duplicates', one: 'was a duplicate', many: 'were duplicates', why: 'same number, two rows' },
+  invalid_address: { label: 'numbers invalid', one: 'number was invalid or missing', many: 'numbers were invalid or missing', why: 'no usable phone number or email' },
+  already_sent: { label: 'already got it', one: 'already had it', many: 'already had it', why: 'sent earlier in this campaign' },
+}
+
+/** 9 → "09:00", 24 → "24:00" (midnight, end of day). */
+export function hourLabel(h: number | undefined | null): string {
+  if (h === undefined || h === null || Number.isNaN(h)) return '—'
+  return `${String(Math.max(0, Math.min(24, Math.round(h)))).padStart(2, '0')}:00`
+}
+
+/** A campaign's template/list/device may come back as an id or a populated document. */
+export function idOf(v: string | { _id: string } | null | undefined): string {
+  if (!v) return ''
+  return typeof v === 'string' ? v : v._id ?? ''
 }

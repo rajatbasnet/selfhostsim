@@ -191,7 +191,8 @@ function MembersModal({ list, onClose, onChanged }: { list: ContactList | null; 
   }
   const removeMember = async (c: Contact) => {
     if (!id) return
-    const r = await run(() => api.del(`/lists/${id}/members/${c._id}`))
+    // DELETE /lists/:id/members with ListMembersInputDTO { contactIds }
+    const r = await run(() => api.del(`/lists/${id}/members`, { contactIds: [c._id] }))
     if (r !== undefined) {
       members.reload()
       onChanged()
@@ -258,7 +259,7 @@ function MembersModal({ list, onClose, onChanged }: { list: ContactList | null; 
                       <Td mono>{maskPhone(c.phone)}</Td>
                       <Td className="text-mut">{maskEmail(c.email)}</Td>
                       <Td>
-                        <ConsentBadge channel="sms" consent={c.smsConsent} optedOut={Boolean(c.optedOutAt) || Boolean(c.suppressed)} />
+                        <ConsentBadge channel="sms" consent={c.smsConsent} optedOut={Boolean(c.optedOutAt)} />
                       </Td>
                       <Td>
                         <ConsentBadge channel="email" consent={c.emailConsent} />

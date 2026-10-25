@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { forwardRef, useEffect, type ReactNode } from 'react'
+import { isCancelled, statusLabel } from '@/lib/format'
 
 /* ---------- buttons ---------- */
 
@@ -134,37 +135,22 @@ export function Chip({ active, onClick, children }: { active?: boolean; onClick?
   )
 }
 
-export function StatusBadge({ status }: { status: string | undefined }) {
+export function StatusBadge({ status, error }: { status: string | undefined; error?: string | null }) {
+  const cancelled = isCancelled({ status, error })
   const tone: Tone =
-    status === 'sending' || status === 'running'
+    status === 'sending'
       ? 'info'
-      : status === 'done' || status === 'completed' || status === 'finished'
+      : status === 'completed'
         ? 'ok'
         : status === 'failed'
-          ? 'bad'
+          ? cancelled
+            ? 'grey'
+            : 'bad'
           : status === 'paused' || status === 'scheduled'
             ? 'warn'
             : 'grey'
-  const label =
-    status === 'sending' || status === 'running'
-      ? 'Sending'
-      : status === 'done' || status === 'completed' || status === 'finished'
-        ? 'Done'
-        : status === 'failed'
-          ? 'Stopped with errors'
-          : status === 'paused'
-            ? 'Paused'
-            : status === 'scheduled'
-              ? 'Scheduled'
-              : status === 'draft'
-                ? 'Draft'
-                : status === 'cancelled' || status === 'canceled'
-                  ? 'Cancelled'
-                  : status || 'Unknown'
-  return <Badge tone={tone}>{label}</Badge>
+  return <Badge tone={tone}>{statusLabel(status, error)}</Badge>
 }
-
-/* ---------- layout ---------- */
 
 export function Card({ children, className = '', title, action }: { children: ReactNode; className?: string; title?: ReactNode; action?: ReactNode }) {
   return (

@@ -6,7 +6,7 @@ import { api, qs } from '@/lib/api'
 import { summariseCsv, type CsvSummary } from '@/lib/csv'
 import { displayName, fmtNum, maskEmail, maskPhone, timeAgo, titleCase } from '@/lib/format'
 import { useAction, useDebounced, useLoad } from '@/lib/hooks'
-import type { Contact, ContactFilter, ContactList } from '@/lib/types'
+import type { ConsentQuery, Contact, ContactFilter, ContactList, ImportSummary, ListFilter } from '@/lib/types'
 import {
   Badge,
   Button,
@@ -30,13 +30,16 @@ import {
   Th,
 } from '@/components/ui'
 
-const FILTERS: { key: ContactFilter; label: string }[] = [
+// Each chip is one value of ListContactsQueryDTO.consent ('sms' | 'email' | 'any' | 'none').
+// The API has no "opted out" filter (optedOutAt is a field, not a query), so there is no such chip.
+const FILTERS: { key: ContactFilter; label: string; consent?: ConsentQuery }[] = [
   { key: 'all', label: 'all' },
-  { key: 'sms_ok', label: 'SMS ok' },
-  { key: 'email_ok', label: 'email ok' },
-  { key: 'opted_out', label: 'opted out' },
-  { key: 'no_consent', label: 'no consent' },
+  { key: 'sms_ok', label: 'SMS ok', consent: 'sms' },
+  { key: 'email_ok', label: 'email ok', consent: 'email' },
+  { key: 'no_consent', label: 'no consent', consent: 'none' },
 ]
+
+const consentOf = (f: ContactFilter): ConsentQuery | undefined => FILTERS.find((x) => x.key === f)?.consent
 
 const LIMIT = 50
 
@@ -54,17 +57,17 @@ export default function ContactsPage() {
   useEffect(() => setPage(1), [q, filter])
 
   const list = useLoad(
-    () => api.list<Contact>(`/contacts${qs({ search: q, filter: filter === 'all' ? undefined : filter, page, limit: LIMIT })}`),
+    () => api.list<Contact>(`/contacts${qs({ search: q, consent: consentOf(filter), page, limit: LIMIT })}`),
     [q, filter, page],
   )
 
-  // Chip counts: five tiny queries that only read meta.total.
+  // Chip counts: four tiny queries that only read meta.total.
   const counts = useLoad(async () => {
     const out: Partial<Record<ContactFilter, number>> = {}
     await Promise.all(
       FILTERS.map(async (f) => {
         try {
-          const r = await api.list<Contact>(`/contacts${qs({ filter: f.key === 'all' ? undefined : f.key, limit: 1 })}`)
+          const r = await api.list<Contact>(`/contacts${qs({ consent: f.consent, limit: 1 })}`)
           out[f.key] = r.meta?.total ?? (f.key === 'all' ? r.data.length : undefined)
         } catch {
           // leave undefined
@@ -155,7 +158,7 @@ export default function ContactsPage() {
               </thead>
               <tbody>
                 {list.data.data.map((c) => {
-                  const stopped = Boolean(c.optedOutAt) || Boolean(c.suppressed)
+                  const stopped = Boolean(c.optedOutAt)
                   return (
                     <tr key={c._id} className={`cursor-pointer hover:bg-greyb/50 ${stopped ? 'opacity-80' : ''}`} onClick={() => setEditing(c)}>
                       <Td className="font-medium">{displayName(c)}</Td>
@@ -171,7 +174,7 @@ export default function ContactsPage() {
                       </Td>
                       <Td>{c.phone ? <ConsentBadge channel="sms" consent={c.smsConsent} optedOut={stopped} /> : <span className="text-mut">—</span>}</Td>
                       <Td>{c.email ? <ConsentBadge channel="email" consent={c.emailConsent} /> : <span className="text-mut">—</span>}</Td>
-                      <Td className="text-mut">{timeAgo(c.lastMessageAt)}</Td>
+                      <Td className="text-mut">{timeAgo(c.lastMessagedAt)}</Td>
                     </tr>
                   )
                 })}
@@ -200,43 +203,42 @@ export default function ContactsPage() {
 /* Import a CSV                                                        */
 /* ------------------------------------------------------------------ */
 
-interface ImportResult {
-  [k: string]: unknown
-}
-
+/** ImportContactsSummaryDTO: { created, updated, skipped, skippedReasons } */
 const IMPORT_KEY_LABELS: Record<string, string> = {
-  imported: 'added',
   created: 'added',
-  inserted: 'added',
   updated: 'updated',
   skipped: 'skipped',
-  suppressed: 'kept suppressed (STOP wins over an import)',
-  skippedSuppressed: 'kept suppressed (STOP wins over an import)',
-  invalid: 'had no usable phone or email',
-  duplicates: 'were duplicates',
-  total: 'rows read',
+}
+
+/** ImportSkipReason in api/src/contacts/contacts.service.ts */
+const SKIPPED_REASON_LABELS: Record<string, string> = {
+  no_phone_or_email: 'had no usable phone or email',
+  invalid_phone: 'had a phone number we could not read',
+  invalid_email: 'had an email address we could not read',
+  duplicate_in_file: 'were repeated in the file',
+  conflicts_with_existing: 'matched two different existing people',
+  write_failed: 'could not be saved',
 }
 
 function ImportModal({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
   const [csv, setCsv] = useState('')
   const [consentSource, setConsentSource] = useState('')
-  const [assumeSms, setAssumeSms] = useState(false)
-  const [assumeEmail, setAssumeEmail] = useState(false)
-  const [result, setResult] = useState<ImportResult | null>(null)
+  const [result, setResult] = useState<ImportSummary | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const { busy, error, run, clearError } = useAction()
 
+  // The server records consent for every row when a consent source is given (SMS where there is a
+  // phone, email where there is an email), unless the row's own consent column says no.
+  const assumed = Boolean(consentSource.trim())
   const summary: CsvSummary | null = useMemo(
-    () => (csv.trim() ? summariseCsv(csv, { smsConsent: assumeSms || undefined, emailConsent: assumeEmail || undefined, consentSource: consentSource || undefined }) : null),
-    [csv, assumeSms, assumeEmail, consentSource],
+    () => (csv.trim() ? summariseCsv(csv, { smsConsent: assumed || undefined, emailConsent: assumed || undefined, consentSource: consentSource.trim() || undefined }) : null),
+    [csv, assumed, consentSource],
   )
 
   const reset = () => {
     setCsv('')
     setResult(null)
     setConsentSource('')
-    setAssumeSms(false)
-    setAssumeEmail(false)
     clearError()
   }
 
@@ -246,12 +248,11 @@ function ImportModal({ open, onClose, onDone }: { open: boolean; onClose: () => 
   }
 
   const commit = async () => {
+    // ImportContactsInputDTO: { csv, defaultCountryCode?, consentSource?, tags? }
     const r = await run(() =>
-      api.post<ImportResult>('/contacts/import', {
+      api.post<ImportSummary>('/contacts/import', {
         csv,
-        consentSource: consentSource || undefined,
-        smsConsent: assumeSms || undefined,
-        emailConsent: assumeEmail || undefined,
+        consentSource: consentSource.trim() || undefined,
       }),
     )
     if (r !== undefined) {
@@ -293,22 +294,27 @@ function ImportModal({ open, onClose, onDone }: { open: boolean; onClose: () => 
           <Notice tone="ok">Import finished.</Notice>
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
             {Object.entries(result)
-              .filter(([, v]) => typeof v === 'number')
+              .filter((e): e is [string, number] => typeof e[1] === 'number')
               .map(([k, v]) => (
                 <div key={k} className="contents">
-                  <dt className="text-right font-semibold tabular-nums">{fmtNum(v as number)}</dt>
+                  <dt className="text-right font-semibold tabular-nums">{fmtNum(v)}</dt>
                   <dd className="text-mut">{IMPORT_KEY_LABELS[k] ?? titleCase(k).toLowerCase()}</dd>
                 </div>
               ))}
           </dl>
-          {Array.isArray(result.errors) && result.errors.length > 0 && (
+          {result.skippedReasons && Object.values(result.skippedReasons).some((n) => n > 0) && (
             <div className="text-sm">
               <div className="mb-1 font-medium text-bad">Rows we could not use</div>
-              <ul className="max-h-40 list-inside list-disc overflow-y-auto text-xs text-mut">
-                {(result.errors as unknown[]).slice(0, 50).map((e, i) => (
-                  <li key={i}>{typeof e === 'string' ? e : JSON.stringify(e)}</li>
-                ))}
-              </ul>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs text-mut">
+                {Object.entries(result.skippedReasons)
+                  .filter(([, n]) => n > 0)
+                  .map(([k, n]) => (
+                    <div key={k} className="contents">
+                      <dt className="text-right font-semibold tabular-nums">{fmtNum(n)}</dt>
+                      <dd>{SKIPPED_REASON_LABELS[k] ?? titleCase(k).toLowerCase()}</dd>
+                    </div>
+                  ))}
+              </dl>
             </div>
           )}
           <p className="text-xs text-mut">Anyone who ever replied STOP stays suppressed, even if this file says otherwise.</p>
@@ -323,11 +329,9 @@ function ImportModal({ open, onClose, onDone }: { open: boolean; onClose: () => 
               <Field label="…or upload a file">
                 <input ref={fileRef} type="file" accept=".csv,.tsv,.txt,text/csv" onChange={(e) => onFile(e.target.files?.[0])} className="block w-full text-sm text-mut file:mr-3 file:rounded-lg file:border file:border-line file:bg-card file:px-3 file:py-1.5 file:text-sm file:text-fg" />
               </Field>
-              <Field label="Where did these people agree to be contacted?" hint="Recorded on every row as the consent source, e.g. 'shop sign-up sheet, Oct 2026'. Rows with no source and no consent column import, but can never be sent to.">
+              <Field label="Where did these people agree to be contacted?" hint="Recorded on every row as the consent source, e.g. 'shop sign-up sheet, Oct 2026'. Giving a source records consent for everyone in the file (SMS where there is a phone, email where there is an email) unless a row's consent column says no. Only fill it in if you asked them. Rows with no source and no consent column import, but can never be sent to.">
                 <Input value={consentSource} onChange={(e) => setConsentSource(e.target.value)} placeholder="e.g. POS checkout opt-in" />
               </Field>
-              <Checkbox label="Everyone in this file agreed to SMS" hint="Only tick this if you asked them. It is used when the file has no consent column." checked={assumeSms} onChange={(e) => setAssumeSms(e.target.checked)} />
-              <Checkbox label="Everyone in this file agreed to email" checked={assumeEmail} onChange={(e) => setAssumeEmail(e.target.checked)} />
             </div>
           </div>
 
@@ -423,7 +427,7 @@ function ContactModal({ open, contact, onClose, onDone }: { open: boolean; conta
 
   useEffect(() => {
     if (!open) return
-    setName(displayName(contact) === 'Someone' ? '' : contact?.name ?? [contact?.firstName, contact?.lastName].filter(Boolean).join(' '))
+    setName(contact?.name?.trim() ?? '')
     setPhone(contact?.phone ?? '')
     setEmail(contact?.email ?? '')
     setTags((contact?.tags ?? []).join(', '))
@@ -433,7 +437,7 @@ function ContactModal({ open, contact, onClose, onDone }: { open: boolean; conta
     clearError()
   }, [open, contact, clearError])
 
-  const stopped = Boolean(contact?.optedOutAt) || Boolean(contact?.suppressed)
+  const stopped = Boolean(contact?.optedOutAt)
 
   const save = async () => {
     const body = {
@@ -520,7 +524,7 @@ function ContactModal({ open, contact, onClose, onDone }: { open: boolean; conta
           </div>
           {contact && (
             <div className="text-xs text-mut">
-              Last message {timeAgo(contact.lastMessageAt)}
+              Last message {timeAgo(contact.lastMessagedAt)}
               {contact.createdAt ? ` · added ${timeAgo(contact.createdAt)}` : ''}
             </div>
           )}
@@ -552,13 +556,34 @@ function ContactModal({ open, contact, onClose, onDone }: { open: boolean; conta
 /* Save the current filter as a list                                   */
 /* ------------------------------------------------------------------ */
 
+/** The most people a search is turned into a hand-picked list for. */
+const STATIC_LIST_CAP = 2000
+
 function SaveListModal({ open, onClose, count, filter, onSaved }: { open: boolean; onClose: () => void; count: number; filter: { search: string; filter: ContactFilter }; onSaved: (l: ContactList) => void }) {
   const [name, setName] = useState('')
   const { busy, error, run } = useAction()
-  const canSend = filter.filter !== 'opted_out' && filter.filter !== 'no_consent'
+  const canSend = filter.filter !== 'no_consent'
+  // A dynamic list's filter (ListFilterDTO) knows consent and tags, not free text. So a chip alone
+  // becomes a living list; a search becomes a hand-picked list of the people it matches right now.
+  const living = !filter.search
 
   const save = async () => {
-    const r = await run(() => api.post<ContactList>('/lists', { name: name.trim() || `People matching "${filter.search || filter.filter}"`, type: 'dynamic', filter }))
+    const listName = name.trim() || `People matching "${filter.search || filter.filter}"`
+    const r = await run(async () => {
+      if (living) {
+        const f: ListFilter = {}
+        if (filter.filter === 'sms_ok') f.smsConsent = true
+        if (filter.filter === 'email_ok') f.emailConsent = true
+        return api.post<ContactList>('/lists', { name: listName, type: 'dynamic', filter: f })
+      }
+      const contactIds: string[] = []
+      for (let page = 1; contactIds.length < STATIC_LIST_CAP; page++) {
+        const r = await api.list<Contact>(`/contacts${qs({ search: filter.search, consent: consentOf(filter.filter), page, limit: 100 })}`)
+        contactIds.push(...r.data.map((c) => c._id))
+        if (r.data.length < 100 || (r.meta && page >= r.meta.totalPages)) break
+      }
+      return api.post<ContactList>('/lists', { name: listName, type: 'static', contactIds: contactIds.slice(0, STATIC_LIST_CAP) })
+    })
     if (r) onSaved(r)
   }
 
@@ -581,7 +606,10 @@ function SaveListModal({ open, onClose, count, filter, onSaved }: { open: boolea
       {canSend ? (
         <div className="space-y-3 text-sm">
           <p>
-            We will save this search as a living list and open the composer. Anyone in it who has opted out or has no consent is held back automatically, and the composer shows you how many.
+            {living
+              ? 'We will save this filter as a living list and open the composer.'
+              : `We will save the ${fmtNum(Math.min(count, STATIC_LIST_CAP))} people this search matches right now as a list and open the composer.${count > STATIC_LIST_CAP ? ` (A search list holds at most ${fmtNum(STATIC_LIST_CAP)} people.)` : ''}`}{' '}
+            Anyone in it who has opted out or has no consent is held back automatically, and the composer shows you how many.
           </p>
           <Field label="Name the list">
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={filter.search ? `Search: ${filter.search}` : 'Everyone'} autoFocus />
@@ -589,7 +617,7 @@ function SaveListModal({ open, onClose, count, filter, onSaved }: { open: boolea
           <InlineError message={error} />
         </div>
       ) : (
-        <Notice tone="bad">These people have opted out or never agreed to be contacted, so they cannot be sent to. Pick a different filter.</Notice>
+        <Notice tone="bad">These people never agreed to be contacted, so they cannot be sent to. Pick a different filter.</Notice>
       )}
     </Modal>
   )

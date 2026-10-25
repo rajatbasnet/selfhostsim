@@ -4,28 +4,28 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useMemo } from 'react'
 import { api } from '@/lib/api'
-import { aboutMinutes, channelLabel, fmtDateTime, fmtNum, fmtTime, isActive, isFinished, maskPhone, statusLabel, titleCase } from '@/lib/format'
+import { aboutMinutes, channelLabel, fmtDateTime, fmtNum, fmtTime, isActive, isCancelled, isFinished, maskPhone, SKIP_REASONS, statusLabel, titleCase } from '@/lib/format'
 import { useAction, useLoad } from '@/lib/hooks'
-import type { Campaign, CampaignReport, Failure, HeldBack } from '@/lib/types'
+import type { Campaign, CampaignReport, CampaignStats, ReportFailure } from '@/lib/types'
 import { Button, Card, EmptyState, ErrorState, InlineError, LinkButton, Loading, StatTile, StatusBadge, Table, Td, Th } from '@/components/ui'
 
-const HELD: Record<string, { label: (n: number) => string; why: string }> = {
-  suppressed: { label: (n) => `${n === 1 ? 'was' : 'were'} suppressed`, why: 'replied STOP at some point' },
-  optedOut: { label: (n) => `${n === 1 ? 'had' : 'had'} opted out`, why: 'replied STOP at some point' },
-  noConsent: { label: (n) => `${n === 1 ? 'had' : 'had'} no consent`, why: 'imported without a source' },
-  duplicates: { label: (n) => `${n === 1 ? 'was a duplicate' : 'were duplicates'}`, why: 'same number, two rows' },
-  invalid: { label: (n) => `${n === 1 ? 'number was' : 'numbers were'} invalid`, why: 'carrier rejected the format' },
-  alreadySent: { label: () => 'already had it', why: 'sent earlier in this campaign' },
-  noPhone: { label: (n) => `${n === 1 ? 'has' : 'have'} no phone number`, why: 'nothing to send an SMS to' },
-  noEmail: { label: (n) => `${n === 1 ? 'has' : 'have'} no email address`, why: 'nothing to send an email to' },
-  overCap: { label: (n) => `${n === 1 ? 'is' : 'are'} waiting for tomorrow`, why: 'the daily cap was reached' },
-  outsideWindow: { label: (n) => `${n === 1 ? 'is' : 'are'} waiting for sending hours`, why: 'outside the send window' },
+/** A failure row as the table shows it, derived from the API's { contact, recipient, errorCode, errorMessage }. */
+interface FailureRow {
+  key: string
+  name: string
+  phone?: string
+  email?: string
+  error: string
+  suggestion: string
+  attempts?: number
+  failedAt?: string
 }
 
 /** "4 failed" is not information. Pair every carrier reason with a next step. */
-function suggestFor(error: string | undefined): string {
-  const e = (error ?? '').toLowerCase()
+function suggestFor(code: string | undefined, message: string | undefined): string {
+  const e = `${code ?? ''} ${message ?? ''}`.trim().toLowerCase()
   if (!e) return 'retry tomorrow'
+  if (/campaign_cancelled|cancelled before dispatch/.test(e)) return 'nothing — you cancelled it'
   if (/invalid|unknown (number|subscriber)|not a valid|format|absent subscriber|does not exist|unallocated/.test(e)) return 'fix the number'
   if (/no service|unreachable|out of (range|coverage)|timeout|temporar|busy|network/.test(e)) return 'retry tomorrow'
   if (/block|spam|reject|barred|denied|filter|blacklist/.test(e)) return 'try email instead'
@@ -36,10 +36,26 @@ function suggestFor(error: string | undefined): string {
   return 'retry tomorrow'
 }
 
-function toCsv(rows: Failure[]): string {
+function toRow(f: ReportFailure, i: number): FailureRow {
+  const recipient = f.recipient ?? ''
+  const isEmail = recipient.includes('@')
+  const error = f.errorMessage || f.errorCode || ''
+  return {
+    key: f.sendId ?? `${f.contact?.id ?? 'x'}-${i}`,
+    name: f.contact?.name?.trim() || '',
+    phone: isEmail ? undefined : recipient || undefined,
+    email: isEmail ? recipient : undefined,
+    error,
+    suggestion: suggestFor(f.errorCode, f.errorMessage),
+    attempts: f.attempts,
+    failedAt: f.failedAt,
+  }
+}
+
+function toCsv(rows: FailureRow[]): string {
   const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
   const head = ['who', 'number', 'email', 'what the carrier said', 'what to do', 'when']
-  const lines = rows.map((f) => [f.name, f.phone, f.email, f.error, f.suggestion ?? suggestFor(f.error), f.failedAt].map(esc).join(','))
+  const lines = rows.map((f) => [f.name, f.phone, f.email, f.error, f.suggestion, f.failedAt].map(esc).join(','))
   return [head.join(','), ...lines].join('\n')
 }
 
@@ -50,20 +66,28 @@ export default function CampaignReportPage() {
   const report = useLoad(() => api.get<CampaignReport>(`/campaigns/${id}/report`).catch(() => null as CampaignReport | null), [id], { every: 15000 })
   const { busy, error, run } = useAction()
 
-  const c = report.data?.campaign ?? campaign.data ?? null
-  const stats = { ...(c?.stats ?? {}), ...(report.data?.stats ?? {}) }
-  const held: HeldBack = report.data?.heldBack ?? {}
+  // GET /campaigns/:id is the full document; the report carries a summary with `id` instead of `_id`.
+  const rc = report.data?.campaign
+  const c: Campaign | null = campaign.data ?? (rc ? { _id: rc.id, name: rc.name, channel: rc.channel, status: rc.status, startedAt: rc.startedAt, completedAt: rc.completedAt, error: rc.error, stats: rc.stats } : null)
+  const stats: CampaignStats = rc?.stats ?? c?.stats ?? {}
+  const totals = report.data?.totals
+  // Send rows move queued → sent → delivered | failed. Prefer the report's live counts, then the cached stats.
+  const picked = stats.picked ?? totals?.total
+  const delivered = totals?.delivered ?? stats.delivered
+  const failed = totals?.failed ?? stats.failed
+  const inFlight = totals?.sent ?? stats.sent
+  const queued = totals?.queued ?? stats.queued
+  const sent = inFlight !== undefined || delivered !== undefined ? (inFlight ?? 0) + (delivered ?? 0) : undefined
+  const skippedByReason = report.data?.skippedByReason ?? stats.skippedByReason ?? {}
   const heldRows = useMemo(
     () =>
-      Object.entries(held)
+      Object.entries(skippedByReason)
         .filter(([, v]) => typeof v === 'number' && v > 0)
-        .map(([k, v]) => ({ key: k, n: v as number, label: HELD[k]?.label(v as number) ?? titleCase(k).toLowerCase(), why: HELD[k]?.why ?? '' })),
-    [held],
+        .map(([k, v]) => ({ key: k, n: v, label: v === 1 ? SKIP_REASONS[k]?.one ?? titleCase(k).toLowerCase() : SKIP_REASONS[k]?.many ?? titleCase(k).toLowerCase(), why: SKIP_REASONS[k]?.why ?? '' })),
+    [skippedByReason],
   )
-  const picked = stats.picked ?? stats.eligible
-  const sent = stats.sent
-  const gap = picked !== undefined && sent !== undefined ? Math.max(0, picked - sent) : heldRows.reduce((a, b) => a + b.n, 0)
-  const failures = report.data?.failures ?? []
+  const gap = totals?.skipped ?? stats.skipped ?? heldRows.reduce((a, b) => a + b.n, 0)
+  const failures = useMemo(() => (report.data?.failures ?? []).map(toRow), [report.data])
 
   const act = async (verb: 'pause' | 'resume') => {
     await run(() => api.post(`/campaigns/${id}/${verb}`))
@@ -94,8 +118,9 @@ export default function CampaignReportPage() {
   }
 
   const active = isActive(c.status)
-  const target = stats.eligible ?? stats.picked ?? 0
-  const remaining = target > (sent ?? 0) ? (target - (sent ?? 0)) / Math.max(1, c.ratePerMin ?? 10) : 0
+  const rate = c.pacing?.ratePerMinute ?? 10
+  const remaining = (queued ?? 0) / Math.max(1, rate)
+  const cancelled = isCancelled(c)
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -107,11 +132,21 @@ export default function CampaignReportPage() {
           <h1 className="mt-1 text-xl font-semibold md:text-2xl">{c.name || 'Untitled campaign'}</h1>
           <p className="mt-1 text-sm text-mut">
             {channelLabel(c.channel)} ·{' '}
-            {isFinished(c.status) ? `finished ${c.finishedAt ? fmtTime(c.finishedAt) : ''}` : active ? (c.status === 'paused' ? 'paused' : `sending · ${aboutMinutes(remaining)} left`) : c.status === 'scheduled' ? `starts ${fmtDateTime(c.scheduledAt)}` : statusLabel(c.status).toLowerCase()}
+            {isFinished(c.status)
+              ? `finished ${c.completedAt ? fmtTime(c.completedAt) : ''}`
+              : active
+                ? c.status === 'paused'
+                  ? 'paused'
+                  : `sending · ${aboutMinutes(remaining)} left`
+                : c.status === 'scheduled'
+                  ? `starts ${fmtDateTime(c.scheduledAt)}`
+                  : c.status === 'failed' && c.error && !cancelled
+                    ? `stopped: ${c.error}`
+                    : statusLabel(c.status, c.error).toLowerCase()}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <StatusBadge status={c.status} />
+          <StatusBadge status={c.status} error={c.error} />
           {c.status === 'sending' && (
             <Button variant="danger" onClick={() => act('pause')} disabled={busy}>
               Pause
@@ -128,16 +163,19 @@ export default function CampaignReportPage() {
       <InlineError message={error} />
 
       {c.status === 'draft' ? (
-        <EmptyState title="This is still a draft" body="Nothing has been sent. Open it in the composer to finish and send." />
+        <EmptyState
+          title="This is still a draft"
+          body={c.scheduledAt ? `Planned for ${fmtDateTime(c.scheduledAt)}. The server does not start campaigns on a timer yet, so open it in the composer and press Send when the time comes.` : 'Nothing has been sent. Open it in the composer to finish and send.'}
+        />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
             <StatTile value={fmtNum(picked)} label="picked" hint="in the list when it started" />
-            <StatTile value={fmtNum(sent)} label="actually sent" hint={picked !== undefined && sent !== undefined && picked !== sent ? `${fmtNum(gap)} held back, see below` : undefined} />
-            <StatTile value={fmtNum(stats.delivered)} label="delivered" tone="ok" hint="the phone confirmed it" />
-            <StatTile value={fmtNum(stats.failed)} label="failed" tone={stats.failed ? 'bad' : 'grey'} hint="carrier said no" />
-            <StatTile value={fmtNum(stats.optedOut)} label="replied STOP" tone={stats.optedOut ? 'warn' : 'grey'} hint="now suppressed" />
-            <StatTile value={fmtNum(stats.replied)} label="replied back" tone={stats.replied ? 'info' : 'grey'} href="/inbox" hint="open the inbox" />
+            <StatTile value={fmtNum(sent)} label="actually sent" hint={gap > 0 ? `${fmtNum(gap)} held back, see below` : undefined} />
+            <StatTile value={fmtNum(delivered)} label="delivered" tone="ok" hint="the phone confirmed it" />
+            <StatTile value={fmtNum(failed)} label="failed" tone={failed ? 'bad' : 'grey'} hint="carrier said no" />
+            <StatTile value={fmtNum(queued)} label="still to go" tone={queued ? 'info' : 'grey'} hint={active ? `at ${rate} a minute` : 'queued'} />
+            <StatTile value={fmtNum(gap)} label="held back" tone={gap ? 'warn' : 'grey'} hint="never sent, see below" />
           </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-5">
@@ -180,7 +218,7 @@ export default function CampaignReportPage() {
                 <Loading rows={3} />
               ) : failures.length === 0 ? (
                 <div className="px-4 py-6 text-sm text-mut">
-                  {stats.failed ? `${fmtNum(stats.failed)} failed, but the server has not sent the details yet.` : 'Nothing failed.'}
+                  {failed ? `${fmtNum(failed)} failed, but the server has not sent the details yet.` : 'Nothing failed.'}
                 </div>
               ) : (
                 <Table>
@@ -193,12 +231,15 @@ export default function CampaignReportPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {failures.map((f, i) => (
-                      <tr key={f.sendId ?? f.contactId ?? i}>
+                    {failures.map((f) => (
+                      <tr key={f.key}>
                         <Td className="font-medium">{f.name || 'Unknown'}</Td>
                         <Td mono>{f.phone ? maskPhone(f.phone) : f.email || '—'}</Td>
-                        <Td className="text-bad">{f.error || 'no reason given'}</Td>
-                        <Td className="whitespace-nowrap">{f.suggestion || suggestFor(f.error)}</Td>
+                        <Td className="text-bad">
+                          {f.error || 'no reason given'}
+                          {f.attempts && f.attempts > 1 ? <span className="block text-xs text-mut">after {f.attempts} tries</span> : null}
+                        </Td>
+                        <Td className="whitespace-nowrap">{f.suggestion}</Td>
                       </tr>
                     ))}
                   </tbody>

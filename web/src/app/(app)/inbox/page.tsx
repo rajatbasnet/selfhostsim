@@ -71,7 +71,8 @@ export default function InboxPage() {
 
   const suppress = async () => {
     if (!suppressing) return
-    const r = await run(() => api.post('/suppression', { phone: suppressing.from, reason: 'manual' }))
+    // CreateSuppressionDTO: { value, channel, reason }
+    const r = await run(() => api.post('/suppression', { value: suppressing.from, channel: 'sms', reason: 'manual' }))
     if (r !== undefined) {
       setSuppressing(null)
       inbox.reload()

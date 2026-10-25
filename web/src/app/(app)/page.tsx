@@ -19,7 +19,7 @@ function greeting(): string {
 
 export default function DashboardPage() {
   const phone = usePhoneStatus(15000)
-  const campaigns = useLoad(() => api.list<Campaign>('/campaigns?limit=8&sort=-createdAt'), [], { every: 20000 })
+  const campaigns = useLoad(() => api.list<Campaign>('/campaigns'), [], { every: 20000 })
   const { busy, error: actionError, run } = useAction()
 
   const active = useMemo(() => campaigns.data?.data.find((c) => isActive(c.status)) ?? null, [campaigns.data])
@@ -32,10 +32,11 @@ export default function DashboardPage() {
     campaigns.reload()
   }
 
-  // Progress for the "sending now" panel.
-  const sent = active?.stats?.sent ?? 0
-  const target = active?.stats?.eligible ?? active?.stats?.picked ?? active?.stats?.queued ?? 0
-  const rate = active?.ratePerMin ?? 10
+  // Progress for the "sending now" panel. Rows move queued → sent → delivered | failed;
+  // the target is everyone picked who was not held back.
+  const sent = (active?.stats?.sent ?? 0) + (active?.stats?.delivered ?? 0) + (active?.stats?.failed ?? 0)
+  const target = Math.max(0, (active?.stats?.picked ?? 0) - (active?.stats?.skipped ?? 0))
+  const rate = active?.pacing?.ratePerMinute ?? 10
   const remaining = target > sent ? (target - sent) / Math.max(rate, 1) : 0
   const pct = target > 0 ? Math.min(100, Math.round((sent / target) * 100)) : 0
 
@@ -80,7 +81,7 @@ export default function DashboardPage() {
                 <div className="text-lg font-semibold tabular-nums">
                   {fmtNum(sent)} of {fmtNum(target)} <span className="text-sm font-normal text-mut">{channelLabel(active.channel)} messages sent</span>
                 </div>
-                <StatusBadge status={active.status} />
+                <StatusBadge status={active.status} error={active.error} />
               </div>
               <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-greyb" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
                 <div className={`h-full rounded-full ${active.status === 'paused' ? 'bg-warn' : 'bg-info'}`} style={{ width: `${pct}%` }} />
@@ -157,7 +158,7 @@ export default function DashboardPage() {
                 <Th right>Sent</Th>
                 <Th right>Delivered</Th>
                 <Th right>Failed</Th>
-                <Th right>Opted out</Th>
+                <Th right>Held back</Th>
               </tr>
             </thead>
             <tbody>
@@ -170,12 +171,12 @@ export default function DashboardPage() {
                   </Td>
                   <Td>{channelLabel(c.channel)}</Td>
                   <Td>
-                    <StatusBadge status={c.status} />
+                    <StatusBadge status={c.status} error={c.error} />
                   </Td>
-                  <Td right>{fmtNum(c.stats?.sent)}</Td>
+                  <Td right>{fmtNum(c.stats ? (c.stats.sent ?? 0) + (c.stats.delivered ?? 0) : undefined)}</Td>
                   <Td right className="text-ok">{fmtNum(c.stats?.delivered)}</Td>
                   <Td right className={c.stats?.failed ? 'text-bad' : ''}>{fmtNum(c.stats?.failed)}</Td>
-                  <Td right>{fmtNum(c.stats?.optedOut)}</Td>
+                  <Td right>{fmtNum(c.stats?.skipped)}</Td>
                 </tr>
               ))}
             </tbody>

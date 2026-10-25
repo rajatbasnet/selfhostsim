@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { api, qs } from '@/lib/api'
-import { channelLabel, fmtDateTime, fmtNum, isActive } from '@/lib/format'
+import { channelLabel, fmtDateTime, fmtNum, isActive, isFinished } from '@/lib/format'
 import { useAction, useLoad } from '@/lib/hooks'
 import type { Campaign } from '@/lib/types'
 import { Button, Chip, Confirm, EmptyState, ErrorState, InlineError, LinkButton, Loading, PageHeader, Pager, StatusBadge, Table, Td, Th } from '@/components/ui'
@@ -13,18 +13,24 @@ const FILTERS: { key: string; label: string; match: (s: string) => boolean }[] =
   { key: 'draft', label: 'drafts', match: (s) => s === 'draft' },
   { key: 'scheduled', label: 'scheduled', match: (s) => s === 'scheduled' },
   { key: 'sending', label: 'sending', match: (s) => isActive(s) },
-  { key: 'done', label: 'done', match: (s) => s === 'done' || s === 'completed' || s === 'finished' || s === 'failed' || s === 'cancelled' },
+  { key: 'done', label: 'done', match: (s) => isFinished(s) || s === 'failed' },
 ]
+
+/** Rows move queued → sent → delivered, so "sent" means everything that left the phone. */
+function sentCount(c: Campaign): number | undefined {
+  if (!c.stats) return undefined
+  return (c.stats.sent ?? 0) + (c.stats.delivered ?? 0)
+}
 
 export default function CampaignsPage() {
   const [filter, setFilter] = useState('all')
   const [page, setPage] = useState(1)
   const [deleting, setDeleting] = useState<Campaign | null>(null)
-  const list = useLoad(() => api.list<Campaign>(`/campaigns${qs({ page, limit: 50, status: filter === 'all' ? undefined : filter, sort: '-createdAt' })}`), [page, filter], { every: 20000 })
+  // GET /campaigns returns every campaign, newest first; filtering and paging happen here.
+  const list = useLoad(() => api.list<Campaign>(`/campaigns${qs({ page, limit: 50 })}`), [page, filter], { every: 20000 })
   const { busy, error, run } = useAction()
 
   const f = FILTERS.find((x) => x.key === filter) ?? FILTERS[0]
-  // Filter client-side too, in case the API ignores ?status=.
   const rows = (list.data?.data ?? []).filter((c) => f.match(c.status))
 
   const act = async (c: Campaign, verb: 'pause' | 'resume') => {
@@ -95,7 +101,7 @@ export default function CampaignsPage() {
                   <Th right>Sent</Th>
                   <Th right>Delivered</Th>
                   <Th right>Failed</Th>
-                  <Th right>Opted out</Th>
+                  <Th right>Held back</Th>
                   <Th>When</Th>
                   <Th />
                 </tr>
@@ -110,15 +116,15 @@ export default function CampaignsPage() {
                     </Td>
                     <Td>{channelLabel(c.channel)}</Td>
                     <Td>
-                      <StatusBadge status={c.status} />
+                      <StatusBadge status={c.status} error={c.error} />
                     </Td>
-                    <Td right>{fmtNum(c.stats?.picked ?? c.stats?.eligible)}</Td>
-                    <Td right>{fmtNum(c.stats?.sent)}</Td>
+                    <Td right>{fmtNum(c.stats?.picked)}</Td>
+                    <Td right>{fmtNum(sentCount(c))}</Td>
                     <Td right className="text-ok">{fmtNum(c.stats?.delivered)}</Td>
                     <Td right className={c.stats?.failed ? 'text-bad' : ''}>{fmtNum(c.stats?.failed)}</Td>
-                    <Td right>{fmtNum(c.stats?.optedOut)}</Td>
+                    <Td right>{fmtNum(c.stats?.skipped)}</Td>
                     <Td className="whitespace-nowrap text-mut">
-                      {c.status === 'scheduled' && c.scheduledAt ? `starts ${fmtDateTime(c.scheduledAt)}` : c.finishedAt ? `finished ${fmtDateTime(c.finishedAt)}` : c.startedAt ? `started ${fmtDateTime(c.startedAt)}` : c.createdAt ? `created ${fmtDateTime(c.createdAt)}` : '—'}
+                      {(c.status === 'scheduled' || c.status === 'draft') && c.scheduledAt ? `${c.status === 'draft' ? 'planned for' : 'starts'} ${fmtDateTime(c.scheduledAt)}` : c.completedAt ? `finished ${fmtDateTime(c.completedAt)}` : c.startedAt ? `started ${fmtDateTime(c.startedAt)}` : c.createdAt ? `created ${fmtDateTime(c.createdAt)}` : '—'}
                     </Td>
                     <Td right>
                       <span className="flex justify-end gap-1">
