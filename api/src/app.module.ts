@@ -11,19 +11,31 @@ import { UsersModule } from './users/users.module'
 import { ThrottlerModule } from '@nestjs/throttler'
 import { APP_GUARD } from '@nestjs/core/constants'
 import { ThrottlerByIpGuard } from './auth/guards/throttle-by-ip.guard'
-import { Injectable, NestMiddleware } from '@nestjs/common'
+import { Injectable, NestMiddleware, Logger } from '@nestjs/common'
 import { Request, Response, NextFunction } from 'express'
 import { ScheduleModule } from '@nestjs/schedule'
 import { ConfigModule, ConfigService } from '@nestjs/config'
 import { BullModule } from '@nestjs/bull'
 import { EventEmitterModule } from '@nestjs/event-emitter'
-import { SubaccountsModule } from './subaccounts/subaccounts.module'
-import { GhlModule } from './integrations/ghl/ghl.module'
+
+// The Sendline marketing layer.
+import { ContactsModule } from './contacts/contacts.module'
+import { ListsModule } from './lists/lists.module'
+import { TemplatesModule } from './templates/templates.module'
+import { CampaignsModule } from './campaigns/campaigns.module'
+import { SuppressionModule } from './suppression/suppression.module'
+import { EmailModule } from './email/email.module'
+import { MessagingModule } from './messaging/messaging.module'
+import { InboundModule } from './inbound/inbound.module'
 
 @Injectable()
 export class LoggerMiddleware implements NestMiddleware {
+  private readonly logger = new Logger('HTTP')
+
   use(req: Request, res: Response, next: NextFunction) {
-    console.log('req.originalUrl: ', req.originalUrl)
+    // Method and path only. Bodies carry phone numbers and message text, and
+    // those do not belong in a log file.
+    this.logger.debug(`${req.method} ${req.originalUrl}`)
     if (next) {
       next()
     }
@@ -56,8 +68,14 @@ export class LoggerMiddleware implements NestMiddleware {
     AuthModule,
     UsersModule,
     GatewayModule,
-    SubaccountsModule,
-    GhlModule,
+    ContactsModule,
+    ListsModule,
+    TemplatesModule,
+    SuppressionModule,
+    EmailModule,
+    CampaignsModule,
+    MessagingModule,
+    InboundModule,
   ],
   controllers: [],
   providers: [
