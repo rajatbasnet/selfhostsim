@@ -1,22 +1,30 @@
+# The pnpm version is pinned on purpose. This read `pnpm@latest`, which is
+# not a version: upstream wrote it against pnpm 9 and `latest` is now 12,
+# which made "ignored build scripts" fatal and broke the build outright.
+# A pinned package manager is also one less thing that can change under us
+# between two builds of the same commit.
+#
 # Stage 1: Dependencies
 FROM node:22-alpine AS deps
 WORKDIR /app
+ARG PNPM_VERSION=9.15.9
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 # Copy package.json and pnpm-lock.yaml
 COPY package.json pnpm-lock.yaml ./
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Stage 2: Builder
 FROM node:22-alpine AS builder
 WORKDIR /app
+ARG PNPM_VERSION=9.15.9
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
@@ -28,9 +36,10 @@ RUN pnpm build
 # Stage 3: Production
 FROM node:22-alpine AS runner
 WORKDIR /app
+ARG PNPM_VERSION=9.15.9
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 # Set NODE_ENV to production
 ENV NODE_ENV production
@@ -41,7 +50,7 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/pnpm-lock.yaml ./
 
 # Install only production dependencies
-RUN pnpm install --prod --frozen-lockfile
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # Add a non-root user
 RUN addgroup --system --gid 1001 nodejs && \

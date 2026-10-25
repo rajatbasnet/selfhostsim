@@ -200,11 +200,14 @@ export function Shell({ children }: { children: ReactNode }) {
             <span className="truncate text-sm font-semibold">{current?.label ?? 'Sendline'}</span>
           </div>
           <div className="hidden text-sm text-mut md:block">{current?.blurb}</div>
-          <div className="min-w-0">
-            <span className="hidden md:inline-flex">
+          {/* flex-1 + min-w-0 all the way down, or the pill cannot shrink: its
+              own max-w-full resolves against a content-sized inline-flex and
+              the whole page scrolls sideways on a phone. */}
+          <div className="flex min-w-0 flex-1 justify-end">
+            <span className="hidden min-w-0 md:inline-flex">
               <PhoneStatusPill />
             </span>
-            <span className="inline-flex md:hidden">
+            <span className="inline-flex min-w-0 md:hidden">
               <PhoneStatusPill compact />
             </span>
           </div>
