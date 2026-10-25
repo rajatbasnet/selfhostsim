@@ -1,6 +1,5 @@
 plugins {
     id 'com.android.application'
-    id 'com.google.firebase.crashlytics'
 }
 
 android {
@@ -52,17 +51,17 @@ android {
             dimension "environment"
             applicationId "com.amp.sms.dev"
             versionNameSuffix "-dev"
-            buildConfigField "String", "API_BASE_URL", '"https://api.selfhostsim.com/api/v1/"'
+            buildConfigField "String", "API_BASE_URL", "\"${project.property('SENDLINE_API_BASE_URL')}\""
             buildConfigField "String", "ENVIRONMENT", '"development"'
-            resValue "string", "app_name", "selfhostsim.com (Dev)"
+            resValue "string", "app_name", "Sendline (Dev)"
         }
         
         prod {
             dimension "environment"
             applicationId "com.amp.sms.dev"
-            buildConfigField "String", "API_BASE_URL", '"https://api.selfhostsim.com/api/v1/"'
+            buildConfigField "String", "API_BASE_URL", "\"${project.property('SENDLINE_API_BASE_URL')}\""
             buildConfigField "String", "ENVIRONMENT", '"production"'
-            resValue "string", "app_name", "selfhostsim.com"
+            resValue "string", "app_name", "Sendline"
         }
     }
 
@@ -82,10 +81,8 @@ dependencies {
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.4.0'
 
     implementation platform('com.google.firebase:firebase-bom:29.2.1')
-    implementation 'com.google.firebase:firebase-analytics'
     implementation 'com.google.firebase:firebase-messaging'
     implementation 'com.google.firebase:firebase-messaging-directboot'
-    implementation 'com.google.firebase:firebase-crashlytics'
 
     implementation 'com.google.code.gson:gson:2.9.0'
     implementation 'com.squareup.retrofit2:retrofit:2.9.0'

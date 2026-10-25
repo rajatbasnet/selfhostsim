@@ -49,8 +49,10 @@ RUN addgroup --system --gid 1001 nodejs && \
     chown -R nestjs:nodejs /app
 USER nestjs
 
-# Expose the port specified by the PORT environment variable (default: 3001)
-ENV PORT 300
+# Expose the port specified by the PORT environment variable (default: 3001).
+# This read 300 upstream, which is a typo: a bare `docker run` bound the wrong
+# port, and it only went unnoticed because compose overrides PORT at runtime.
+ENV PORT 3001
 EXPOSE ${PORT}
 
 # Health check to verify app is running

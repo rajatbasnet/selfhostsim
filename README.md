@@ -1,255 +1,164 @@
-# SelfhostSim — self-hosted Android SMS gateway for GoHighLevel (GHL)
+# Sendline
 
-SelfhostSim is an open-source SMS gateway that lets you send/receive SMS in GoHighLevel using your **own Android phone(s)** (real SIM cards) while self-hosting the backend infrastructure.
+Self-hosted SMS and email marketing that runs on your laptop and sends through
+your own Android phone and SIM. No per-message fee, no vendor holding your
+contact list, nothing exposed to the open internet.
 
-**Tech stack:** Android (Java) • Node.js (NestJS + Express) • MongoDB • Redis • Firebase Cloud Messaging (FCM)
-**Official Installation Guide:** https://selfhostsim.com/docs
+Forked from [ampilares/selfhostsim](https://github.com/ampilares/selfhostsim),
+which solved the hard half: getting bytes to a SIM and a delivery receipt back.
+This adds the marketing half — contacts, consent, templates, campaigns, pacing,
+reports, an email channel and a UI — and removes the GoHighLevel coupling.
 
-## What you get
+**The full design, with diagrams, is [`docs/blueprint.html`](docs/blueprint.html).**
+Open it in a browser. It is one self-contained file and explains the whole
+system better than this README can.
 
-- **Outbound SMS from GHL → your phone** (GHL conversations send, SelfhostSim delivers via your Android device)
-- **Inbound SMS from your phone → GHL** (replies show up in GHL conversations)
-- **Multi-device support** (scale throughput by using multiple phones/SIMs)
-- **REST API + Swagger UI** (manage users, devices, messages, API keys)
-- **Optional queueing with Redis** (Bull queue)
+---
 
-## High-level architecture
+## What it is for
 
-SelfhostSim is split into three parts:
+200–500 messages a day, SMS and email, from one screen that a non-technical
+person can drive — plus an HTTP API your other apps can call for transactional
+messages like order confirmations.
 
-- **`android/`**: Android gateway app (sends/receives carrier SMS; talks to the API; receives push jobs via FCM).
-- **`api/`**: NestJS API (auth, device management, message routing, outbound push via FCM, inbound processing).
-- **`ghl/`**: GHL bridge service (OAuth installer + webhook handler + internal endpoint for posting inbound messages to GHL).
-
-Typical message flows:
-
-**Outbound (GHL → phone → carrier)**
-
-1. GHL triggers an outbound message webhook to `ghl/`
-2. `ghl/` forwards the event to `api/` (internal-authenticated)
-3. `api/` sends an FCM push job to the Android device
-4. Android device sends the SMS via the carrier network
-
-**Inbound (carrier → phone → GHL)**
-
-1. Android receives an SMS and POSTs it to `api/` (API-key authenticated)
-2. `api/` calls `ghl/` internal inbound endpoint to add it to the GHL conversation
-
-## Quick start (Docker Compose)
-
-### Prerequisites
-
-- Docker + Docker Compose
-- A Firebase project (for FCM) and a **service account JSON** for the backend (`api/`)
-- A GoHighLevel (GHL) OAuth app (client id/secret) and webhook signing key
-- A public domain + HTTPS (recommended for production; needed for GHL webhooks/OAuth in most setups)
-
-### 1) Create env files
-
-Copy the examples and fill in values:
-
-```bash
-cp api/.env.example api/.env
-cp ghl/.env.example ghl/.env
-cp .env.example .env
+```
+your other apps ─┐
+                 ├─→ API ─→ audience ─→ render ─→ queue ─→ pacer ─┬─→ Android phone + SIM
+web UI ──────────┘                                                └─→ SMTP relay
 ```
 
-#### Important: internal secrets must match
+## The four rules it will not bend
 
-There are two “internal” secrets used for service-to-service calls:
+1. **Nobody gets a message they did not ask for.** Consent is a field with a
+   source and a timestamp, not a habit. `STOP` suppresses in seconds, and
+   suppression outranks every other table — no CSV import can undo it.
+2. **The phone paces itself.** 10 a minute, a hard daily cap, nothing outside
+   09:00–20:00. A phone that emits 500 texts in four minutes looks exactly like
+   a spam bot to a carrier, and the punishment is your SIM.
+3. **Nothing leaves your laptop but the message.** One Mongo volume, Tailscale
+   only, no port forwarded, no analytics.
+4. **Every send is explainable a year later.** Who, when, which template, the
+   exact rendered text, and what the carrier said back — stored, not recomputed.
 
-- **GHL → API forwarding secret**
-  - `api/.env`: set `INTERNAL_SECRET=...`
-  - `ghl/.env`: set `SELFHOSTSIM_INTERNAL_SECRET=...` to the **same value**
-- **API → GHL inbound secret**
-  - `api/.env`: set `GHL_INTERNAL_SECRET=...`
-  - `ghl/.env`: set `GHL_INTERNAL_SECRET=...` to the **same value**
+---
 
-Header names are configurable (`INTERNAL_API_KEY_HEADER_NAME`, `GHL_INTERNAL_HEADER_NAME`), but default to `x-internal-secret`.
+## Getting started
 
-### 2) Start services
+### 1. Secrets
+
+```bash
+./scripts/generate-secrets.sh
+```
+
+Writes `.env` and `api/.env` with real random secrets and prints the admin
+password once. Fill in the `FIREBASE_*` and `SMTP_*` blocks by hand afterwards.
+
+> The upstream project shipped `JWT_SECRET=secret` and an admin password of
+> `selfhostsim`, and nothing in the code makes you change them. This script
+> exists so doing the right thing is the easy thing.
+
+### 2. Bring it up
 
 ```bash
 docker compose up -d --build
 ```
 
-Useful URLs (defaults):
+| Service | Address | Notes |
+|---|---|---|
+| Web UI | `http://localhost:3000` | installable to a phone home screen |
+| API + Swagger | `http://localhost:3001` | generated API docs at the root |
+| MongoDB | `127.0.0.1:27018` | loopback only |
+| Redis | `127.0.0.1:6379` | loopback only |
 
-- API Swagger UI: `http://localhost:3001/`
-- API base path: `http://localhost:3001/api/v1`
-- GHL bridge home: `http://localhost:3002/`
-- Mongo Express: `http://localhost:8081/`
+There is no `mongo-express`. It shipped on `:8081` with admin enabled and
+default credentials; use `docker exec -it sendline-db mongosh` instead.
 
-### 3) Confirm the API bootstrapped an admin user
+### 3. Tailscale
 
-On first start (when the user collection is empty), the API creates a default admin user using:
-
-- `DEFAULT_ADMIN_USERNAME` (default: `admin`)
-- `DEFAULT_ADMIN_PASSWORD` (default: `selfhostsim`)
-
-Change these defaults before deploying to production.
-
-## Configuration reference
-
-### API (`api/.env`)
-
-Common settings:
-
-- `PORT`: API port (default `3001`)
-- `MONGO_URI`: Mongo connection string (Docker Compose uses `selfhostsim-db`)
-- `JWT_SECRET`: change to a long random value
-- `DEFAULT_ADMIN_USERNAME`, `DEFAULT_ADMIN_PASSWORD`: first-boot admin user
-- `DEFAULT_PHONE_COUNTRY_CODE`: used to normalize numbers without country prefix
-
-Firebase (FCM) service account fields (required):
-
-- `FIREBASE_PROJECT_ID`
-- `FIREBASE_PRIVATE_KEY_ID`
-- `FIREBASE_PRIVATE_KEY` (make sure newlines are preserved; `api/` replaces `\\n` with newlines)
-- `FIREBASE_CLIENT_EMAIL`
-- `FIREBASE_CLIENT_ID`
-- `FIREBASE_CLIENT_C509_CERT_URL`
-
-Redis / queueing:
-
-- `REDIS_URL`: required for Bull queue config (Docker Compose includes Redis)
-- `USE_SMS_QUEUE`: enables queue-based outbound dispatching
-
-GHL inbound sync (API → `ghl/`):
-
-- `GHL_SERVICE_BASE_URL`: base URL for the `ghl/` service (Docker: `http://selfhostsim-ghl:3002`)
-- `GHL_INTERNAL_SECRET`, `GHL_INTERNAL_HEADER_NAME`: must match `ghl/.env` for `/api/ghl/v1/internal/*`
-
-### GHL bridge (`ghl/.env`)
-
-GHL OAuth + webhook verification:
-
-- `CLIENT_ID`, `CLIENT_SECRET`: from your GHL OAuth app
-- `WEBHOOK_PUBLIC_KEY`: used to verify `x-wh-signature` on incoming webhooks
-
-Mongo session storage:
-
-- `MONGO_URL`, `MONGO_DB_NAME`, `COLLECTION_NAME`: stores OAuth tokens/sessions
-  - Docker Compose defaults: `ghl_sessions` DB, `sessions` collection
-
-Public URLs / reverse proxy:
-
-- `GHL_PUBLIC_BASE_URL`: public base URL used to generate OAuth redirect URIs (recommended in production)
-- `TRUST_PROXY=1`: set when running behind a reverse proxy
-
-API forwarding (webhook → API internal route):
-
-- `SELFHOSTSIM_API_BASE_URL`: API base URL (example: `http://localhost:3001/api/v1`)
-- `SELFHOSTSIM_INTERNAL_SECRET`: must match `api/.env` `INTERNAL_SECRET`
-
-Inbound posting to GHL (API → internal route):
-
-- `GHL_INTERNAL_SECRET`: must match `api/.env` `GHL_INTERNAL_SECRET`
-- `GHL_CONVERSATION_PROVIDER_ID`: your conversation provider id from GHL
-
-## GoHighLevel setup (what to point where)
-
-SelfhostSim exposes these key endpoints on the `ghl/` service:
-
-- **OAuth install**: `GET /install`
-  - Redirects to GHL authorization and stores the token in MongoDB.
-  - Redirect URI used: `GET /oauth-callback` (must be allowed/registered in your GHL app settings).
-- **Outbound webhook receiver**: `POST /api/ghl/v1/webhook/messages`
-  - Verifies `x-wh-signature` (using `WEBHOOK_PUBLIC_KEY`) and forwards to the API.
-- **Internal inbound endpoint** (used by `api/`): `POST /api/ghl/v1/internal/inbound-sms`
-  - Protected by the internal secret header.
-
-After your services are reachable via HTTPS:
-
-1. Configure GHL to send the relevant webhook(s) to `https://<your-ghl-service-host>/api/ghl/v1/webhook/messages`.
-2. Visit `https://<your-ghl-service-host>/install` and complete OAuth for each location you want to enable.
-
-## Android app setup (`android/`)
-
-### Prerequisites
-
-- Android Studio (recommended) or a working Gradle/JDK setup
-- A Firebase project with `google-services.json` for the Android app
-
-### Configure
-
-1. Place your `google-services.json` into the Android app module (standard Firebase Android setup).
-2. Update the API base URL in `android/app/build.gradle` (`BuildConfig.API_BASE_URL`) to your API’s base URL:
-   - Local example: `http://10.0.2.2:3001/api/v1/` (Android emulator)
-   - Device-on-LAN example: `http://<your-server-lan-ip>:3001/api/v1/`
-   - Production example: `https://api.example.com/api/v1/`
-3. Build and install:
-   ```bash
-   cd android
-   ./gradlew assembleRelease
-   ```
-
-### Connect the phone to your API
-
-The Android app uses an **API key** (`x-api-key`) to authenticate to the backend.
-
-1. Generate an API key in the API (Swagger UI → `POST /api/v1/auth/api-keys`).
-2. In the Android app:
-   - Paste the API key
-   - Enable the gateway
-   - (Optional) enable inbound SMS forwarding and status updates
-   - Grant SMS permissions and disable aggressive battery optimizations for reliability
-
-## Local development (without Docker)
-
-### API
+So the phone and your other devices can reach it from any network, with no port
+forwarding and no certificate to renew.
 
 ```bash
-cd api
-cp .env.example .env
-pnpm install
-pnpm start:dev
+brew install tailscale && sudo tailscale up
+tailscale ip -4          # the 100.x.y.z to point everything at
 ```
 
-API docs are served at `http://localhost:3001/` and endpoints are under `http://localhost:3001/api/v1`.
+Install the Tailscale app on the phone and sign in with the same account.
 
-### GHL bridge
+### 4. The Android gateway
+
+**Set the API address before you build anything.** In `android/gradle.properties`:
+
+```properties
+SENDLINE_API_BASE_URL=http://100.x.y.z:3001/api/v1/
+```
+
+> Upstream hardcoded `https://api.selfhostsim.com/api/v1/` here for *both* the
+> dev and prod build types. Built unmodified, the phone registers with someone
+> else's server, hands it your API key and forwards every SMS it receives
+> there. This fork reads the address from a property instead, and the Firebase
+> analytics and Crashlytics dependencies have been removed outright.
+
+Then:
+
+1. Create a free Firebase project, download `google-services.json` into
+   `android/app/src/prod/`, and copy the service-account values into `api/.env`.
+2. Build and install: `cd android && ./gradlew assembleProdDebug`
+3. In the app, paste an API key generated from the Settings screen, enable the
+   gateway, grant SMS permissions, and **turn battery optimisation off** — this
+   is the single most common cause of a gateway that silently stops working.
+
+---
+
+## Layout
+
+```
+api/     NestJS. Gateway (forked) + the marketing layer (new).
+  src/gateway/      devices, send-sms, delivery status  [from upstream]
+  src/contacts/     contacts, consent, CSV import, phone normalisation
+  src/lists/        static lists and saved dynamic segments
+  src/templates/    merge tags, SMS segment counting
+  src/campaigns/    audience resolution, the pacer, the Send ledger
+  src/suppression/  STOP matching and the do-not-contact list
+  src/email/        SMTP channel
+  src/messaging/    POST /v1/messages — the transactional API
+android/ The gateway app  [from upstream, de-telemetried and re-pointed]
+web/     Next.js UI, installable as a PWA
+docs/    blueprint.html — the design
+```
+
+## The API your other apps call
 
 ```bash
-cd ghl
-cp .env.example .env
-npm ci
-node index.js
+curl -X POST http://100.x.y.z:3001/api/v1/messages \
+  -H 'x-api-key: ...' -H 'content-type: application/json' \
+  -d '{"channel":"sms","to":"+9779812344112","template":"order-shipped",
+       "vars":{"first_name":"Asha","order":"1182"},"lane":"transactional"}'
 ```
 
-## Production notes
+Transactional sends skip pacing and quiet hours — an order confirmation must
+never wait behind 400 promos. They never skip the consent check.
 
-- Put both services behind HTTPS (Caddy/Nginx/Traefik) and set `TRUST_PROXY=1` for `ghl/` when needed.
-- Do not expose MongoDB/Redis to the public internet.
-- Rotate secrets: `JWT_SECRET`, `INTERNAL_SECRET`, `GHL_INTERNAL_SECRET`, and all OAuth credentials.
+## Tests
 
-Example Caddy (host-based routing recommended):
-
-```caddyfile
-api.example.com {
-  reverse_proxy localhost:3001
-}
-
-ghl.example.com {
-  reverse_proxy localhost:3002
-}
+```bash
+cd api && npx jest
 ```
 
-## Contributing
+Unit tests cover the parts where a bug is expensive and silent: phone
+normalisation, CSV parsing, merge-tag rendering, SMS segment counting,
+opt-out keyword matching, audience resolution and the pacer.
 
-1. Fork the project.
-2. Create a feature/bugfix branch from `main`.
-3. Keep commits focused with clear messages.
-4. Open a PR against `main`.
+## Backups
 
-## Bug reports & security
+The whole system is one volume. Losing it loses every contact and every consent
+record, and consent is the one thing you cannot reconstruct.
 
-- Bugs/feature requests: open an issue at `https://github.com/ampilares/selfhostsim/issues/new`.
-- Security issues: email `contact@selfhostsim.com` instead of filing a public issue.
+```bash
+docker run --rm -v sendline_data:/d -v ~/Backups:/b alpine \
+  tar czf /b/sendline-$(date +%F).tgz /d
+```
 
-## Support
+## Licence
 
-Email `contact@selfhostsim.com`, or join the community:
-
-- Facebook group: https://www.facebook.com/groups/selfhostsim
-- Subreddit: https://reddit.com/r/selfhostsim/
+AGPL-3.0, inherited from upstream.

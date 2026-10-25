@@ -1,20 +1,22 @@
+# Sendline - self-hosted SMS + email marketing.
+# Everything binds to 127.0.0.1. Nothing here is reachable from the open
+# internet; remote access is Tailscale's job, not a forwarded port's.
 services:
-  # MongoDB service
-  selfhostsim-db:
-    container_name: selfhostsim-db
-    image: mongo:latest
+  sendline-db:
+    container_name: sendline-db
+    image: mongo:7
     restart: always
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER:-adminUser}
-      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASS:-adminPassword}
-      - MONGO_INITDB_DATABASE=selfhostsim
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASS}
+      - MONGO_INITDB_DATABASE=sendline
     volumes:
-      # - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
-      - mongodb_data:/data/db
+      - sendline_data:/data/db
     ports:
-      - "${MONGO_PORT:-27018}:27017"
+      # Loopback only. The API reaches Mongo over the compose network.
+      - "127.0.0.1:${MONGO_PORT:-27018}:27017"
     networks:
-      - selfhostsim-network
+      - sendline-network
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 30s
@@ -22,56 +24,16 @@ services:
       retries: 3
       start_period: 20s
 
-  # MongoDB Express (optional admin UI)
-  mongo-express:
-    container_name: selfhostsim-mongo-express
-    image: mongo-express:latest
+  sendline-redis:
+    container_name: sendline-redis
+    image: redis:7-alpine
     restart: always
-    ports:
-      - "${MONGO_EXPRESS_PORT:-8081}:8081"
-    environment:
-      - ME_CONFIG_MONGODB_URL=mongodb://${MONGO_ROOT_USER:-adminUser}:${MONGO_ROOT_PASS:-adminPassword}@selfhostsim-db:27017/
-      - ME_CONFIG_MONGODB_ENABLE_ADMIN=true
-    depends_on:
-      selfhostsim-db:
-        condition: service_healthy
-    networks:
-      - selfhostsim-network
-
-  # NestJS API
-  selfhostsim-api:
-    container_name: selfhostsim-api
-    image: selfhostsim-api
-    # image: ghcr.io/vernu/selfhostsim/api:latest
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-    restart: always
-    ports:
-      - "${PORT:-3001}:3001"
-    env_file:
-      - ./api/.env
-    environment:
-      - PORT=${PORT:-3001}
-      - REDIS_URL=${REDIS_URL:-redis://selfhostsim-redis:6379}
-
-    depends_on:
-      selfhostsim-db:
-        condition: service_healthy
-    networks:
-      - selfhostsim-network
-
-  # Redis (if SMS queue is needed)
-  selfhostsim-redis:
-    container_name: selfhostsim-redis
-    image: redis:alpine
-    restart: always
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - redis_data:/data
+      - sendline_redis:/data
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     networks:
-      - selfhostsim-network
+      - sendline-network
     command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -80,39 +42,57 @@ services:
       retries: 3
       start_period: 20s
 
-  # GoHighLevel integration service (webhooks + inbound message posting)
-  selfhostsim-ghl:
-    container_name: selfhostsim-ghl
-    image: selfhostsim-ghl
+  sendline-api:
+    container_name: sendline-api
+    image: sendline-api
     build:
-      context: ./ghl
+      context: ./api
       dockerfile: Dockerfile
     restart: always
     ports:
-      - "${GHL_PORT:-3002}:3002"
+      # 0.0.0.0 on purpose: the Android phone on your LAN and devices on your
+      # tailnet both need to reach this. It is the one service that listens
+      # beyond loopback, and it requires a JWT or an API key for every route.
+      - "${PORT:-3001}:3001"
     env_file:
-      - ./ghl/.env
+      - ./api/.env
     environment:
-      - PORT=3002
-      # Default to using the MongoDB container DNS name (not localhost).
-      - MONGO_URL=${GHL_MONGO_URL:-mongodb://${MONGO_ROOT_USER:-adminUser}:${MONGO_ROOT_PASS:-adminPassword}@selfhostsim-db:27017/?authSource=admin}
-      - MONGO_DB_NAME=${GHL_MONGO_DB_NAME:-ghl_sessions}
-      - COLLECTION_NAME=${GHL_MONGO_COLLECTION_NAME:-sessions}
-      # From within Docker, use the API service DNS name (not localhost).
-      # NOTE: Don't use SELFHOSTSIM_API_BASE_URL here because it's also present in the root `.env` for non-docker usage.
-      - SELFHOSTSIM_API_BASE_URL=${SELFHOSTSIM_API_BASE_URL_CONTAINER:-http://selfhostsim-api:3001/api/v1}
+      - PORT=${PORT:-3001}
+      - REDIS_URL=${REDIS_URL:-redis://sendline-redis:6379}
+      - USE_SMS_QUEUE=${USE_SMS_QUEUE:-true}
     depends_on:
-      selfhostsim-db:
+      sendline-db:
         condition: service_healthy
-      selfhostsim-api:
-        condition: service_started
+      sendline-redis:
+        condition: service_healthy
     networks:
-      - selfhostsim-network
+      - sendline-network
+
+  sendline-web:
+    container_name: sendline-web
+    image: sendline-web
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        # Baked in at build time: this is the address the BROWSER calls, so it
+        # must be your tailnet address, not a container name.
+        - NEXT_PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-http://localhost:3001/api/v1}
+    restart: always
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      - sendline-api
+    networks:
+      - sendline-network
+
+# Deliberately absent: mongo-express. It shipped on :8081 with admin enabled
+# and default credentials. Use `docker exec -it sendline-db mongosh` instead.
 
 networks:
-  selfhostsim-network:
+  sendline-network:
     driver: bridge
 
 volumes:
-  mongodb_data:
-  redis_data: 
+  sendline_data:
+  sendline_redis:

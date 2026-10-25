@@ -32,7 +32,6 @@ import com.amp.sms.dtos.RegisterDeviceInputDTO;
 import com.amp.sms.dtos.RegisterDeviceResponseDTO;
 import com.amp.sms.helpers.SharedPreferenceHelper;
 import com.amp.sms.helpers.VersionTracker;
-import com.google.firebase.crashlytics.FirebaseCrashlytics;
 import java.util.Arrays;
 import java.util.Objects;
 import retrofit2.Call;
@@ -91,12 +90,7 @@ public class MainActivity extends AppCompatActivity {
             VersionTracker.reportVersionToServer(mContext);
         }
         
-        // Initialize Crashlytics with user information
-        FirebaseCrashlytics crashlytics = FirebaseCrashlytics.getInstance();
-        crashlytics.setCustomKey("device_id", deviceId != null ? deviceId : "not_registered");
-        crashlytics.setCustomKey("device_model", Build.MODEL);
-        crashlytics.setCustomKey("app_version", versionName);
-        crashlytics.setCustomKey("app_version_code", BuildConfig.VERSION_CODE);
+        // No telemetry: device id, model and version stay on this handset.
 
         // Start sticky notification service if enabled
         boolean gatewayEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, false);
