@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sendline · offline</title>
+<style>
+  :root { --bg:#fbfaf7; --fg:#1d1d1b; --mut:#6b6a66; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#191917; --fg:#e9e7e1; --mut:#a09d95; } }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,sans-serif; text-align:center; padding:24px; }
+  p { color:var(--mut); max-width:28em; }
+  button { font:inherit; padding:10px 18px; border-radius:10px; border:0; background:var(--fg); color:var(--bg); }
+</style>
+</head>
+<body>
+  <div>
+    <h1 style="font-size:20px;margin:0 0 8px">You are offline</h1>
+    <p>Sendline needs to reach your server to show anything live. Nothing is sending while you cannot see it, unless a campaign was already running.</p>
+    <button onclick="location.reload()">Try again</button>
+  </div>
+</body>
+</html>

@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Palette lifted from docs/blueprint.html so the app matches the design. */
+:root {
+  --bg: #fbfaf7;
+  --side: #f3f1ec;
+  --card: #ffffff;
+  --fg: #1d1d1b;
+  --mut: #6b6a66;
+  --line: #dedbd3;
+  --code: #efece5;
+  --link: #1f5fa8;
+  --ok: #1d6b3a;
+  --okb: #dcefe2;
+  --bad: #8a1f1f;
+  --badb: #f6dcdc;
+  --info: #1f4f86;
+  --infob: #dbe7f6;
+  --warn: #7a4b00;
+  --warnb: #f7e8c8;
+  --grey: #55534e;
+  --greyb: #e6e3dc;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191917;
+    --side: #22211e;
+    --card: #201f1c;
+    --fg: #e9e7e1;
+    --mut: #a09d95;
+    --line: #3a3934;
+    --code: #2b2a26;
+    --link: #8ab8ef;
+    --ok: #9fd8b0;
+    --okb: #1f3a28;
+    --bad: #f0a8a8;
+    --badb: #432020;
+    --info: #a9c8f0;
+    --infob: #1d2c40;
+    --warn: #f0cf8a;
+    --warnb: #3d2f12;
+    --grey: #c9c6be;
+    --greyb: #34332f;
+    color-scheme: dark;
+  }
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+a {
+  color: inherit;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The SMS bubble in the composer preview and inbox. */
+.bubble {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  border-radius: 18px;
+  padding: 10px 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+  background: var(--greyb);
+  color: var(--fg);
+}
+
+.bubble-out {
+  background: var(--infob);
+  color: var(--info);
+}
+
+input[type='time']::-webkit-calendar-picker-indicator,
+input[type='datetime-local']::-webkit-calendar-picker-indicator {
+  opacity: 0.6;
+}
+
+/* Thumb-friendly tap targets on small screens. */
+@media (max-width: 767px) {
+  button,
+  a[role='button'] {
+    min-height: 40px;
+  }
+}
