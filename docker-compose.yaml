@@ -50,10 +50,11 @@ services:
       dockerfile: Dockerfile
     restart: always
     ports:
-      # 0.0.0.0 on purpose: the Android phone on your LAN and devices on your
-      # tailnet both need to reach this. It is the one service that listens
-      # beyond loopback, and it requires a JWT or an API key for every route.
-      - "${PORT:-3001}:3001"
+      # BIND_ADDR is the laptop's Tailscale address, so this listens on the
+      # tailnet and nowhere else. Leave it unset and it falls back to 0.0.0.0,
+      # which also exposes the API to whatever Wi-Fi the laptop is joined to.
+      # Every route still requires a JWT or an API key either way.
+      - "${BIND_ADDR:-0.0.0.0}:${PORT:-3001}:3001"
     env_file:
       - ./api/.env
     environment:
@@ -80,7 +81,8 @@ services:
         - NEXT_PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-http://localhost:3001/api/v1}
     restart: always
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      # Tailnet-only, same as the API. See BIND_ADDR above.
+      - "${BIND_ADDR:-0.0.0.0}:${WEB_PORT:-3000}:3000"
     depends_on:
       - sendline-api
     networks:
