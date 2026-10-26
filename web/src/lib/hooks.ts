@@ -76,5 +76,10 @@ export function useAction() {
       setBusy(false)
     }
   }, [])
-  return { busy, error, run, clearError: () => setError(null) }
+  // useCallback is load-bearing, not tidiness. Every modal in the app puts
+  // clearError in the dep array of the effect that seeds its fields. A fresh
+  // arrow here changes identity on each render, so that effect re-ran after
+  // every keystroke and reset the form under the person typing into it.
+  const clearError = useCallback(() => setError(null), [])
+  return { busy, error, run, clearError }
 }
