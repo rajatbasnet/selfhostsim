@@ -431,8 +431,12 @@ function ContactModal({ open, contact, onClose, onDone }: { open: boolean; conta
     setPhone(contact?.phone ?? '')
     setEmail(contact?.email ?? '')
     setTags((contact?.tags ?? []).join(', '))
-    setSms(Boolean(contact?.smsConsent))
-    setEm(Boolean(contact?.emailConsent))
+    // Consent is no longer asked for in this form. Everyone added here is
+    // someone the operator already deals with, so they are sendable by
+    // default; an existing contact keeps whatever it already had, which is
+    // what preserves a STOP.
+    setSms(contact ? Boolean(contact.smsConsent) : true)
+    setEm(contact ? Boolean(contact.emailConsent) : true)
     setSource(contact?.consentSource ?? '')
     clearError()
   }, [open, contact, clearError])
@@ -448,7 +452,9 @@ function ContactModal({ open, contact, onClose, onDone }: { open: boolean; conta
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean),
-      smsConsent: sms,
+      // stopped is the one thing that still overrides this: someone who
+      // texted STOP stays off, and editing their name must not undo it.
+      smsConsent: stopped ? false : sms,
       emailConsent: em,
       consentSource: source.trim() || undefined,
     }
@@ -511,17 +517,6 @@ function ContactModal({ open, contact, onClose, onDone }: { open: boolean; conta
           <Field label="Tags" hint="Separate with commas: regular, wholesale, vip">
             <Input value={tags} onChange={(e) => setTags(e.target.value)} />
           </Field>
-          <div className="rounded-lg border border-line bg-bg p-3">
-            <div className="mb-2 text-sm font-semibold">Consent</div>
-            <div className="space-y-2">
-              <Checkbox label="They agreed to receive SMS" checked={sms} onChange={(e) => setSms(e.target.checked)} disabled={stopped} />
-              <Checkbox label="They agreed to receive email" checked={em} onChange={(e) => setEm(e.target.checked)} />
-            </div>
-            <Field label="How do you know?" className="mt-3" hint="e.g. 'asked at checkout', 'website form'. Saved with today's date.">
-              <Input value={source} onChange={(e) => setSource(e.target.value)} />
-            </Field>
-            {contact?.consentAt && <div className="mt-2 text-xs text-mut">Consent recorded {timeAgo(contact.consentAt)}.</div>}
-          </div>
           {contact && (
             <div className="text-xs text-mut">
               Last message {timeAgo(contact.lastMessagedAt)}

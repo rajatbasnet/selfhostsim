@@ -2,6 +2,16 @@ plugins {
     id 'com.android.application'
 }
 
+// local.properties is gitignored, so the real tailnet address lives there and
+// never reaches the repo. Falls back to the placeholder in gradle.properties.
+def localProps = new Properties()
+def localPropsFile = rootProject.file('local.properties')
+if (localPropsFile.exists()) {
+    localPropsFile.withInputStream { localProps.load(it) }
+}
+def apiBaseUrl = localProps.getProperty('SENDLINE_API_BASE_URL')
+        ?: project.property('SENDLINE_API_BASE_URL')
+
 android {
     compileSdk 32
 
@@ -51,7 +61,7 @@ android {
             dimension "environment"
             applicationId "com.amp.sms.dev"
             versionNameSuffix "-dev"
-            buildConfigField "String", "API_BASE_URL", "\"${project.property('SENDLINE_API_BASE_URL')}\""
+            buildConfigField "String", "API_BASE_URL", "\"${apiBaseUrl}\""
             buildConfigField "String", "ENVIRONMENT", '"development"'
             resValue "string", "app_name", "Sendline (Dev)"
         }
@@ -59,7 +69,7 @@ android {
         prod {
             dimension "environment"
             applicationId "com.amp.sms.dev"
-            buildConfigField "String", "API_BASE_URL", "\"${project.property('SENDLINE_API_BASE_URL')}\""
+            buildConfigField "String", "API_BASE_URL", "\"${apiBaseUrl}\""
             buildConfigField "String", "ENVIRONMENT", '"production"'
             resValue "string", "app_name", "Sendline"
         }

@@ -47,13 +47,15 @@ public class StickyNotificationService extends Service {
                 false
         );
 
-        if (stickyNotificationEnabled) {
-            Notification notification = createNotification();
-            startForeground(1, notification);
-            Log.i(TAG, "Started foreground service with sticky notification");
-        } else {
-            Log.i(TAG, "Sticky notification disabled by user preference");
-        }
+        // startForeground is not optional. Android 8 and up kills a plain
+        // background service within seconds, and this one has to stay alive
+        // to keep polling, so the notification is the price of the service
+        // existing at all. The user preference decides how loud it is, not
+        // whether it appears.
+        Notification notification = createNotification();
+        startForeground(1, notification);
+        Log.i(TAG, "Gateway service in the foreground (notification "
+                + (stickyNotificationEnabled ? "prominent" : "minimal") + ")");
 
         poller = new SmsPoller(getApplicationContext());
         poller.start();

@@ -94,9 +94,9 @@ public class MainActivity extends AppCompatActivity {
         // Start sticky notification service if enabled
         boolean gatewayEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, false);
         boolean stickyNotificationEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, false);
-        if (gatewayEnabled && stickyNotificationEnabled) {
+        if (gatewayEnabled) {
             selhostsimUtils.startStickyNotificationService(mContext);
-            Log.d(TAG, "Starting sticky notification service on app start");
+            Log.d(TAG, "Starting gateway service on app start");
         }
 
         if (deviceId == null || deviceId.isEmpty()) {
@@ -152,10 +152,7 @@ public class MainActivity extends AppCompatActivity {
                     boolean enabled = Boolean.TRUE.equals(Objects.requireNonNull(response.body()).data.get("enabled"));
                     compoundButton.setChecked(enabled);
                     if (enabled) {
-                        // Check if sticky notification is enabled
-                        if (SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, false)) {
-                            selhostsimUtils.startStickyNotificationService(mContext);
-                        }
+                        selhostsimUtils.startStickyNotificationService(mContext);
                     } else {
                         selhostsimUtils.stopStickyNotificationService(mContext);
                     }

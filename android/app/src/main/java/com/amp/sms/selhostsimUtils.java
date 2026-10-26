@@ -42,24 +42,28 @@ public class selhostsimUtils {
             return;
         }
         
-        // Only start service if user has enabled sticky notification
-        boolean stickyNotificationEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(
+        // This service carries the poll loop, so it runs whenever the gateway
+        // is on. It used to be gated on the sticky-notification preference,
+        // which meant a gateway switched on with notifications off looked
+        // enabled and silently never collected a message.
+        boolean gatewayEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(
                 context,
-                AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY,
+                AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY,
                 false
         );
-        
-        if (stickyNotificationEnabled) {
-            Intent notificationIntent = new Intent(context, StickyNotificationService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(notificationIntent);
-            } else {
-                context.startService(notificationIntent);
-            }
-            Log.i(TAG, "Starting sticky notification service");
-        } else {
-            Log.i(TAG, "Sticky notification disabled by user, not starting service");
+
+        if (!gatewayEnabled) {
+            Log.i(TAG, "Gateway is off, not starting the service");
+            return;
         }
+
+        Intent notificationIntent = new Intent(context, StickyNotificationService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(notificationIntent);
+        } else {
+            context.startService(notificationIntent);
+        }
+        Log.i(TAG, "Starting gateway service");
     }
 
     public static void stopStickyNotificationService(Context context) {
