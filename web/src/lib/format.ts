@@ -171,6 +171,68 @@ export function hourLabel(h: number | undefined | null): string {
   return `${String(Math.max(0, Math.min(24, Math.round(h)))).padStart(2, '0')}:00`
 }
 
+/* --- clock arithmetic across zones ------------------------------------- */
+
+function partsIn(zone: string, ms: number): Record<string, string> {
+  const f = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
+  const o: Record<string, string> = {}
+  for (const part of f.formatToParts(new Date(ms))) if (part.type !== 'literal') o[part.type] = part.value
+  return o
+}
+
+/** How far `zone` is from UTC at that instant, in ms. Positive is east. */
+function offsetMs(zone: string, ms: number): number {
+  const p = partsIn(zone, ms)
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - ms
+}
+
+/** The instant at which the clock in `zone` reads hour:00 on `ref`'s day there. */
+function instantOfHour(zone: string, hour: number, ref: Date): number {
+  const d = partsIn(zone, ref.getTime())
+  const naive = Date.UTC(+d.year, +d.month - 1, +d.day, hour, 0, 0)
+  // Two passes: the first offset is read at the wrong instant, which only
+  // matters within an hour of a DST boundary, and the second settles it.
+  return naive - offsetMs(zone, naive - offsetMs(zone, naive))
+}
+
+/**
+ * "09:00 in `from`" read off a clock in `to`. dayShift says which side of
+ * midnight it lands on, so a window that wraps can admit it rather than
+ * showing a time that looks earlier than the one before it.
+ */
+export function hourAcrossZones(
+  hour: number, from: string, to: string, ref: Date = new Date(),
+): { time: string; dayShift: number } {
+  try {
+    const ms = instantOfHour(from, hour, ref)
+    const a = partsIn(from, ms)
+    const b = partsIn(to, ms)
+    const dayA = Date.UTC(+a.year, +a.month - 1, +a.day)
+    const dayB = Date.UTC(+b.year, +b.month - 1, +b.day)
+    return {
+      time: `${String(+b.hour % 24).padStart(2, '0')}:${b.minute}`,
+      dayShift: Math.round((dayB - dayA) / 86400000),
+    }
+  } catch {
+    // An unknown IANA name from the server should not blank the page.
+    return { time: '—', dayShift: 0 }
+  }
+}
+
+/** "CDT", "GMT+5:45". Computed, not hardcoded, because half of these shift twice a year. */
+export function zoneAbbrev(zone: string, ref: Date = new Date()): string {
+  try {
+    const f = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'short' })
+    return f.formatToParts(ref).find((x) => x.type === 'timeZoneName')?.value ?? zone
+  } catch {
+    return zone
+  }
+}
+
 /** A campaign's template/list/device may come back as an id or a populated document. */
 export function idOf(v: string | { _id: string } | null | undefined): string {
   if (!v) return ''

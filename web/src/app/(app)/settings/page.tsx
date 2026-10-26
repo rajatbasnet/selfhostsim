@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { api } from '@/lib/api'
-import { fmtNum, hourLabel, timeAgo, titleCase } from '@/lib/format'
+import { fmtNum, hourAcrossZones, hourLabel, timeAgo, titleCase, zoneAbbrev } from '@/lib/format'
 import { useAction, useLoad } from '@/lib/hooks'
 import { deviceState } from '@/lib/status'
 import type { ApiKey, Device, PacingSettings, Settings, SuppressionEntry } from '@/lib/types'
@@ -85,6 +85,40 @@ function PhoneSection() {
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * A window in UTC is not something anyone can picture. You sit in Central and
+ * the people being texted are in Nepal, so the only two clocks that matter are
+ * spelled out -- including the day roll, because 20:00 UTC is tomorrow there.
+ */
+const ELSEWHERE = [
+  { zone: 'America/Chicago', name: 'Central' },
+  { zone: 'Asia/Kathmandu', name: 'Nepal' },
+]
+
+function WindowElsewhere({ startHour, endHour, from }: { startHour: number; endHour: number; from: string }) {
+  return (
+    <dl className="mt-2 space-y-1">
+      {ELSEWHERE.map(({ zone, name }) => {
+        if (zone === from) return null
+        const a = hourAcrossZones(startHour, from, zone)
+        const b = hourAcrossZones(endHour, from, zone)
+        const roll = b.dayShift > a.dayShift ? ' (+1 day)' : ''
+        return (
+          <div key={zone} className="flex items-baseline gap-2 text-sm">
+            <dt className="w-32 flex-none text-mut">
+              {name} <span className="text-xs">{zoneAbbrev(zone)}</span>
+            </dt>
+            <dd className="tabular-nums">
+              {a.time} to {b.time}
+              {roll && <span className="text-mut">{roll}</span>}
+            </dd>
+          </div>
+        )
+      })}
+    </dl>
+  )
+}
+
 /** DEFAULT_PACING in api/src/sendline/sendline.enums.ts: what every new campaign starts from. */
 const DEFAULT_PACING: Required<PacingSettings> = { ratePerMinute: 10, dailyCap: 500, windowStartHour: 9, windowEndHour: 20, jitterMs: 2000, timezone: 'UTC' }
 
@@ -111,8 +145,10 @@ function PacingSection() {
         </Field>
         <Field label="Sending hours" hint="Nothing goes out outside this window, in the campaign's time zone. Transactional messages from your other apps still go instantly.">
           <div className="text-lg font-semibold tabular-nums">
-            {hourLabel(p.windowStartHour)} <span className="text-sm font-normal text-mut">to</span> {hourLabel(p.windowEndHour)}
+            {hourLabel(p.windowStartHour)} <span className="text-sm font-normal text-mut">to</span> {hourLabel(p.windowEndHour)}{' '}
+            <span className="text-sm font-normal text-mut">{p.timezone}</span>
           </div>
+          <WindowElsewhere startHour={p.windowStartHour} endHour={p.windowEndHour} from={p.timezone} />
         </Field>
         <Field label="Spacing wobble" hint="Each message goes out a random couple of seconds early or late, so the phone is never a perfect metronome.">
           <div className="text-lg font-semibold tabular-nums">
