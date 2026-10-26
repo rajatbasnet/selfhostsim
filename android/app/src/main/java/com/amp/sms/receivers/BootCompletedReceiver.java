@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.os.Build;
 import android.util.Log;
 
-import com.google.firebase.messaging.FirebaseMessaging;
 import com.amp.sms.ApiManager;
 import com.amp.sms.AppConstants;
 import com.amp.sms.BuildConfig;
@@ -62,17 +61,12 @@ public class BootCompletedReceiver extends BroadcastReceiver {
      * Updates device information on the server after boot
      */
     private void updateDeviceInfo(Context context, String deviceId, String apiKey) {
-        FirebaseMessaging.getInstance().getToken()
-            .addOnCompleteListener(task -> {
-                if (!task.isSuccessful()) {
-                    Log.e(TAG, "Failed to obtain FCM token after boot");
-                    return;
-                }
+        // No push token to refresh on boot any more; this just tells the
+// server the app is back and which version it is.
+        {
                 
-                String token = task.getResult();
                 
                 RegisterDeviceInputDTO updateInput = new RegisterDeviceInputDTO();
-                updateInput.setFcmToken(token);
                 updateInput.setAppVersionCode(BuildConfig.VERSION_CODE);
                 updateInput.setAppVersionName(BuildConfig.VERSION_NAME);
                 
@@ -95,6 +89,6 @@ public class BootCompletedReceiver extends BroadcastReceiver {
                             Log.e(TAG, "Error updating device info after boot: " + t.getMessage());
                         }
                     });
-            });
+                    }
     }
 }

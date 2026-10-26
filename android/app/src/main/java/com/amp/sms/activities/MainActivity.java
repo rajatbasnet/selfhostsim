@@ -20,7 +20,6 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 import com.google.android.material.snackbar.Snackbar;
-import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
 import com.amp.sms.ApiManager;
@@ -327,20 +326,13 @@ public class MainActivity extends AppCompatActivity {
         registerDeviceBtn.setText("Loading...");
         View view = findViewById(R.id.registerDeviceBtn);
 
-        FirebaseMessaging.getInstance().getToken()
-                .addOnCompleteListener(task -> {
-                    if (!task.isSuccessful()) {
-                        Snackbar.make(view, "Failed to obtain FCM Token :(", Snackbar.LENGTH_LONG).show();
-                        registerDeviceBtn.setEnabled(true);
-                        registerDeviceBtn.setText("Update");
-                        return;
-                    }
-                    String token = task.getResult();
-                    fcmTokenEditText.setText(token);
+        // Registration used to block on an FCM token and give up if Google
+// did not supply one. The phone collects its own work now, so there
+// is no token to wait for and no push address to report.
+        {
 
                     RegisterDeviceInputDTO registerDeviceInput = new RegisterDeviceInputDTO();
                     registerDeviceInput.setEnabled(true);
-                    registerDeviceInput.setFcmToken(token);
                     registerDeviceInput.setBrand(Build.BRAND);
                     registerDeviceInput.setManufacturer(Build.MANUFACTURER);
                     registerDeviceInput.setModel(Build.MODEL);
@@ -435,7 +427,7 @@ public class MainActivity extends AppCompatActivity {
                             registerDeviceBtn.setText("Update");
                         }
                     });
-                });
+                        }
     }
 
     private void handleUpdateDevice() {
@@ -447,20 +439,13 @@ public class MainActivity extends AppCompatActivity {
         registerDeviceBtn.setText("Loading...");
         View view = findViewById(R.id.registerDeviceBtn);
 
-        FirebaseMessaging.getInstance().getToken()
-                .addOnCompleteListener(task -> {
-                    if (!task.isSuccessful()) {
-                        Snackbar.make(view, "Failed to obtain FCM Token :(", Snackbar.LENGTH_LONG).show();
-                        registerDeviceBtn.setEnabled(true);
-                        registerDeviceBtn.setText("Update");
-                        return;
-                    }
-                    String token = task.getResult();
-                    fcmTokenEditText.setText(token);
+        // Registration used to block on an FCM token and give up if Google
+// did not supply one. The phone collects its own work now, so there
+// is no token to wait for and no push address to report.
+        {
 
                     RegisterDeviceInputDTO updateDeviceInput = new RegisterDeviceInputDTO();
                     updateDeviceInput.setEnabled(true);
-                    updateDeviceInput.setFcmToken(token);
                     updateDeviceInput.setBrand(Build.BRAND);
                     updateDeviceInput.setManufacturer(Build.MANUFACTURER);
                     updateDeviceInput.setModel(Build.MODEL);
@@ -508,7 +493,7 @@ public class MainActivity extends AppCompatActivity {
                             registerDeviceBtn.setText("Update");
                         }
                     });
-                });
+                        }
     }
 
     private void handleRequestPermissions(View view) {

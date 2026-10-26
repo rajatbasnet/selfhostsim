@@ -20,6 +20,13 @@ import com.amp.sms.helpers.SharedPreferenceHelper;
 
 public class StickyNotificationService extends Service {
 
+    /**
+     * The gateway's pulse. This service is already the thing Android keeps
+     * alive in the background, so the poll loop lives here rather than in
+     * WorkManager, whose periodic floor is fifteen minutes.
+     */
+    private SmsPoller poller;
+
     private static final String TAG = "StickyNotificationService";
 
     @Override
@@ -47,6 +54,9 @@ public class StickyNotificationService extends Service {
         } else {
             Log.i(TAG, "Sticky notification disabled by user preference");
         }
+
+        poller = new SmsPoller(getApplicationContext());
+        poller.start();
     }
 
     @Override
@@ -57,6 +67,10 @@ public class StickyNotificationService extends Service {
 
     @Override
     public void onDestroy() {
+        if (poller != null) {
+            poller.stop();
+            poller = null;
+        }
         super.onDestroy();
         
         Log.i(TAG, "StickyNotificationService destroyed");
