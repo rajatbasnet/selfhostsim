@@ -48,6 +48,7 @@ describe('GatewayService', () => {
   const mockSmsModel = {
     create: jest.fn(),
     find: jest.fn(),
+    findOneAndUpdate: jest.fn(),
     updateMany: jest.fn(),
     countDocuments: jest.fn(),
   }
@@ -301,6 +302,130 @@ describe('GatewayService', () => {
     })
   })
 
+  describe('polling transport', () => {
+    const noFcm = {
+      FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
+      FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY,
+      FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL,
+    }
+
+    beforeEach(() => {
+      delete process.env.FIREBASE_PROJECT_ID
+      delete process.env.FIREBASE_PRIVATE_KEY
+      delete process.env.FIREBASE_CLIENT_EMAIL
+    })
+
+    afterAll(() => {
+      for (const [k, v] of Object.entries(noFcm)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    })
+
+    it('writes the SMS rows but pushes nothing when Firebase is absent', async () => {
+      const device = { _id: 'dev1', enabled: true, fcmToken: 'unused' }
+      mockDeviceModel.findById.mockResolvedValue(device)
+      mockSmsBatchModel.create.mockResolvedValue({ _id: 'batch1' })
+      mockSmsModel.create.mockResolvedValue({ _id: 'sms1' })
+      mockSmsBatchModel.findByIdAndUpdate.mockResolvedValue(true)
+      const push = jest
+        .spyOn(firebaseAdmin.messaging(), 'sendEach')
+        .mockResolvedValue({ successCount: 1, failureCount: 0, responses: [] })
+
+      const result: any = await service.sendSMS('dev1', {
+        message: 'hello',
+        recipients: ['+9779812344412'],
+      } as any)
+
+      expect(result.transport).toBe('poll')
+      expect(mockSmsModel.create).toHaveBeenCalledTimes(1)
+      // The whole point: Google is not in the path.
+      expect(push).not.toHaveBeenCalled()
+      // And it must not reach the queue either, which would push on its behalf.
+      expect(mockSmsQueueService.addSendSmsJob).not.toHaveBeenCalled()
+    })
+
+    it('does not push even when the queue is switched on', async () => {
+      mockDeviceModel.findById.mockResolvedValue({ _id: 'dev1', enabled: true })
+      mockSmsBatchModel.create.mockResolvedValue({ _id: 'batch1' })
+      mockSmsModel.create.mockResolvedValue({ _id: 'sms1' })
+      mockSmsBatchModel.findByIdAndUpdate.mockResolvedValue(true)
+      mockSmsQueueService.isQueueEnabled.mockReturnValue(true)
+
+      const result: any = await service.sendSMS('dev1', {
+        message: 'hello',
+        recipients: ['+9779812344412'],
+      } as any)
+
+      expect(result.transport).toBe('poll')
+      expect(mockSmsQueueService.addSendSmsJob).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('claimPendingSMS', () => {
+    beforeEach(() => {
+      mockDeviceModel.findById.mockResolvedValue({ _id: 'dev1' })
+    })
+
+    it('claims what is waiting and stops when the queue runs dry', async () => {
+      mockSmsModel.findOneAndUpdate
+        .mockResolvedValueOnce({
+          _id: 'sms1',
+          smsBatch: 'batch1',
+          message: 'first',
+          recipient: '+9779812344412',
+        })
+        .mockResolvedValueOnce({
+          _id: 'sms2',
+          smsBatch: 'batch1',
+          message: 'second',
+          recipient: '+9779812344413',
+        })
+        .mockResolvedValueOnce(null)
+
+      const claimed = await service.claimPendingSMS('dev1', 20)
+
+      expect(claimed).toHaveLength(2)
+      expect(claimed[0]).toEqual({
+        smsId: 'sms1',
+        smsBatchId: 'batch1',
+        message: 'first',
+        recipients: ['+9779812344412'],
+      })
+      // Three calls, not twenty: it stops at the first empty result.
+      expect(mockSmsModel.findOneAndUpdate).toHaveBeenCalledTimes(3)
+    })
+
+    it('marks a row taken in the same query that reads it', async () => {
+      mockSmsModel.findOneAndUpdate
+        .mockResolvedValueOnce({ _id: 'sms1', message: 'x', recipient: '+1' })
+        .mockResolvedValueOnce(null)
+
+      await service.claimPendingSMS('dev1', 20)
+
+      const [filter, update] = mockSmsModel.findOneAndUpdate.mock.calls[0]
+      expect(filter.status).toBe('pending')
+      expect(update.$set.status).toBe('dispatched')
+    })
+
+    it('never hands out more than the caller asked for', async () => {
+      mockSmsModel.findOneAndUpdate.mockResolvedValue({
+        _id: 'sms1',
+        message: 'x',
+        recipient: '+1',
+      })
+
+      const claimed = await service.claimPendingSMS('dev1', 3)
+
+      expect(claimed).toHaveLength(3)
+    })
+
+    it('rejects an unknown device rather than returning an empty list', async () => {
+      mockDeviceModel.findById.mockResolvedValue(null)
+      await expect(service.claimPendingSMS('nope', 20)).rejects.toThrow()
+    })
+  })
+
   describe('sendSMS', () => {
     const mockDeviceId = 'device123'
     const mockDevice = {
@@ -336,7 +461,26 @@ describe('GatewayService', () => {
       responses: [],
     }
 
+    // These cases describe the push transport, which only runs when Firebase
+    // is configured. Without this the service takes the polling path, where
+    // creating the SMS rows is the whole job and nothing is pushed anywhere.
+    const fcmEnv = {
+      FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
+      FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY,
+      FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL,
+    }
+
+    afterAll(() => {
+      for (const [k, v] of Object.entries(fcmEnv)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    })
+
     beforeEach(() => {
+      process.env.FIREBASE_PROJECT_ID = 'test-project'
+      process.env.FIREBASE_PRIVATE_KEY = 'test-key'
+      process.env.FIREBASE_CLIENT_EMAIL = 'test@example.com'
       mockDeviceModel.findById.mockResolvedValue(mockDevice)
       mockSmsBatchModel.create.mockResolvedValue(mockSmsBatch)
       mockSmsModel.create.mockResolvedValue(mockSms)

@@ -192,6 +192,26 @@ export class GatewayController {
     return result
   }
 
+  @ApiOperation({
+    summary: 'Collect the SMS waiting for this device and mark them taken',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'How many to claim at once (default: 20, max: 50)',
+  })
+  @UseGuards(AuthGuard, CanModifyDevice)
+  @HttpCode(HttpStatus.OK)
+  @Get('/devices/:id/pending-sms')
+  async pendingSMS(@Param('id') deviceId: string, @Request() req) {
+    const limit = req.query.limit
+      ? Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50)
+      : 20
+    const data = await this.gatewayService.claimPendingSMS(deviceId, limit)
+    return { data }
+  }
+
   @ApiOperation({ summary: 'Update SMS status' })
   @UseGuards(AuthGuard, CanModifyDevice)
   @HttpCode(HttpStatus.OK)

@@ -60,7 +60,15 @@ export class SMS {
   // failureReason: string
 
   @Prop({ type: String, default: 'pending' })
-  status: 'pending' | 'sent' | 'delivered' | 'failed' | 'unknown' | 'received'
+  status:
+    | 'pending'
+    /** Handed to the phone by a poll, not yet confirmed on the air. */
+    | 'dispatched'
+    | 'sent'
+    | 'delivered'
+    | 'failed'
+    | 'unknown'
+    | 'received'
 
   // misc metadata for debugging
   @Prop({ type: Object })

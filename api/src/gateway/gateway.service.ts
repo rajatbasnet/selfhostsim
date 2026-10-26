@@ -21,6 +21,19 @@ import { SmsQueueService } from './queue/sms-queue.service'
 import { EventEmitter2 } from '@nestjs/event-emitter'
 import { GATEWAY_SMS_RECEIVED_EVENT } from './events/gateway.events'
 
+/**
+ * Firebase is optional. main.ts only initialises it when all three secrets are
+ * present, so asking the env directly avoids calling into an uninitialised SDK
+ * just to find out it is not there.
+ */
+function isFcmConfigured(): boolean {
+  return Boolean(
+    process.env.FIREBASE_PROJECT_ID &&
+      process.env.FIREBASE_PRIVATE_KEY &&
+      process.env.FIREBASE_CLIENT_EMAIL,
+  )
+}
+
 @Injectable()
 export class GatewayService {
   constructor(
@@ -196,6 +209,22 @@ export class GatewayService {
         },
       }
       fcmMessages.push(fcmMessage)
+    }
+
+    // Polling transport: the SMS rows above are the whole handoff. The phone
+    // is on the tailnet and asks for them itself, so there is nothing to push
+    // and no reason to involve Google in delivering a message to a device
+    // sitting on the same private network as this server.
+    if (!isFcmConfigured()) {
+      await this.smsBatchModel.findByIdAndUpdate(smsBatch._id, {
+        $set: { status: 'processing' },
+      })
+      return {
+        success: true,
+        message: 'Queued for the phone to collect',
+        smsBatchId: smsBatch._id,
+        transport: 'poll',
+      }
     }
 
     // Check if we should use the queue
@@ -615,6 +644,51 @@ export class GatewayService {
       },
       data,
     }
+  }
+
+  /**
+   * Hand this device the messages waiting for it and mark them taken in the
+   * same operation, so a retried poll -- or a second phone registered by
+   * mistake -- cannot pick up the same message and text someone twice.
+   *
+   * findOneAndUpdate is atomic per document, which is the property that
+   * matters here; the loop is a handful of queries at ten messages a minute.
+   */
+  async claimPendingSMS(deviceId: string, limit = 20): Promise<any[]> {
+    const device = await this.deviceModel.findById(deviceId)
+
+    if (!device) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'Device does not exist',
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    const claimed: any[] = []
+
+    for (let i = 0; i < limit; i++) {
+      const sms = await this.smsModel.findOneAndUpdate(
+        { device: device._id, type: SMSType.SENT, status: 'pending' },
+        { $set: { status: 'dispatched' } },
+        { sort: { requestedAt: 1 }, new: true },
+      )
+
+      if (!sms) {
+        break
+      }
+
+      claimed.push({
+        smsId: sms._id.toString(),
+        smsBatchId: sms.smsBatch ? sms.smsBatch.toString() : null,
+        message: sms.message,
+        recipients: [sms.recipient],
+      })
+    }
+
+    return claimed
   }
 
   async getMessages(
